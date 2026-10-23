@@ -293,7 +293,7 @@ Current result:
 hooks/hooks.test.tsx:
 (pass) a prompt reaches the engine masked, with a counted toast in the locale
 (pass) a prompt with nothing sensitive passes unchanged and raises no toast
-(pass) a masked value is drawn highlighted in the transcript
+(pass) a masked value is drawn highlighted in the transcript, on every surface
 (pass) a message with nothing masked is left to the engine
 (pass) the countries option limits which national IDs are masked
 (pass) the color option paints the highlight
@@ -370,7 +370,7 @@ These run the real hooks through the engine's event chain, not just the helper f
 |------|-------|---------|
 | **a prompt reaches the engine masked, with a counted toast in the locale** | `LANG=it_IT.UTF-8`; submits a prompt with an email and a phone | the text that reaches the engine is masked; exactly one toast, in Italian, with count `2` |
 | **a prompt with nothing sensitive passes unchanged and raises no toast** | no locale; submits `refactor the login page` | text unchanged; no toast at all |
-| **a masked value is drawn highlighted in the transcript** | mounts a `UserMessage` row on the terminal surface with a placeholder | the row draws `> mail  🔒 mar•••  ok` |
+| **a masked value is drawn highlighted in the transcript, on every surface** | mounts a `UserMessage` row with a placeholder on `terminal`, `desktop`, `vscode` and `mobile` | the row draws `> mail  🔒 mar•••  ok` |
 | **a message with nothing masked is left to the engine** | mounts a `UserMessage` row with plain text | the mod calls `next(e)` and the engine's own drawing is shown |
 | **the countries option limits which national IDs are masked** | option `countries: 'IT'`; submits a codice fiscale and a PAN | only the codice fiscale reaches the engine masked |
 | **the color option paints the highlight** | option `color: 'green'`; mounts a row with a placeholder | the chip's `backgroundColor` is `#9ece6a` |
@@ -409,9 +409,9 @@ Options are passed with `test(name, { options }, body)`, which the kit reads exa
 | `prompt.submit`: `LC_ALL` / `LC_MESSAGES` precedence over `LANG` | — | ⚠️ not tested |
 | `prompt.submit`: placeholders already in the prompt not re-counted | — | ⚠️ not tested |
 | `redact()`: other key prefixes (`ghp_`, `AKIA`, `AIza`, `xox`, JWT, generic 32+) | — | ⚠️ not tested |
-| `ui.render` on `desktop` / `vscode` / `mobile` surfaces | — | ⚠️ not tested |
+| `ui.render` on `desktop` / `vscode` / `mobile` surfaces | hooks.test: highlighted row | ✅ |
 
-**Summary:** 17 of 23 tracked paths covered (~74%). Every branch of both hooks and both options is exercised at least once. The gaps are additional inputs to branches that are already covered (other key formats, other locale variables, an invalid color) and the non-terminal surfaces.
+**Summary:** 18 of 23 tracked paths covered (~78%). Every branch of both hooks and both options is exercised at least once, and the transcript drawing on all four surfaces. The gaps are additional inputs to branches that are already covered (other key formats, other locale variables, an invalid color).
 
 ### Countries covered by tests
 

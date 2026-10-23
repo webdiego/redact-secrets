@@ -38,14 +38,17 @@ test('a prompt with nothing sensitive passes unchanged and raises no toast', asy
   expect(toasts).toEqual([])
 })
 
-test('a masked value is drawn highlighted in the transcript', async ($, on) => {
-  const ui = await $.ui.mount({
-    ...MESSAGE,
-    props: { text: 'mail ⟦email:mar•••⟧ ok', origin: { kind: 'composer' }, isExpanded: true },
-  })
+test('a masked value is drawn highlighted in the transcript, on every surface', async ($, on) => {
+  for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
+    const ui = await $.ui.mount({
+      ...MESSAGE,
+      surface,
+      props: { text: 'mail ⟦email:mar•••⟧ ok', origin: { kind: 'composer' }, isExpanded: true },
+    })
 
-  expect((await ui.find({ type: 'Text', text: /🔒 mar•••/ }))?.text).toBe('> mail  🔒 mar•••  ok')
-  await ui.unmount()
+    expect((await ui.find({ type: 'Text', text: /🔒 mar•••/ }))?.text).toBe('> mail  🔒 mar•••  ok')
+    await ui.unmount()
+  }
 })
 
 test('a message with nothing masked is left to the engine', async ($, on) => {
