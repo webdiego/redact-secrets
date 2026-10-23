@@ -1,0 +1,1 @@
+{ "name": "redact-secrets", "version": "0.1.0", "description": "Masks emails, phone numbers, API keys, cards and IBANs in prompts before they are sent" }
