@@ -73,8 +73,6 @@ claude plugin install redact-secrets --marketplace webdiego/redact-secrets
 
 In the desktop app, where `/plugin` does not run: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `webdiego/redact-secrets`, then **Add plugin**.
 
-> **Private repository:** the install works only for people who can read the repository on GitHub and whose machine already holds a git credential for github.com (an SSH key, or `gh auth login` followed by `gh auth setup-git`). The install never prompts for one.
-
 To remove it, from a shell:
 
 ```
