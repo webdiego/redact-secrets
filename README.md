@@ -2,14 +2,17 @@
 
 > A Claude Code mod that masks sensitive data in your prompts **before they leave your machine**.
 
-Emails, phone numbers, API keys, credit card numbers and IBANs typed (or pasted) into the Claude Code prompt are replaced with a short placeholder that keeps only their first 3 characters. The model never receives the full value. In your transcript the masked value is highlighted, and a toast tells you how many items were masked, in your system language.
+Emails, phone numbers, API keys, credit card numbers, IBANs and national ID numbers typed (or pasted) into the Claude Code prompt are replaced with a short placeholder that keeps only their first 3 characters. The model never receives the full value. In your transcript the masked value is highlighted, and a toast tells you how many items were masked, in your system language.
+
+![Masked values highlighted in the Claude Code transcript, with the toast counting them](docs/transcript.svg)
 
 ```
-you type:     write to mario.rossi@gmail.com, tel +39 333 123 4567
-model reads:  write to ⟦email:mar•••⟧, tel ⟦phone:+39•••⟧
-you see:      write to  🔒 mar•••  , tel  🔒 +39•••     (highlighted in purple)
-toast:        🔒 Sensitive data masked before sending: 2
+you type:     write to mario.rossi@gmail.com, tel +39 333 123 4567, my tax code is RSSMRA85T10A562S
+model reads:  write to ⟦email:mar•••⟧, tel ⟦phone:+39•••⟧, my tax code is ⟦id:RSS•••⟧
+toast:        🔒 Sensitive data masked before sending: 3
 ```
+
+> The images in this README are illustrations of the mod's output, drawn with the exact colors and text it uses; they are not screen captures.
 
 ---
 
@@ -17,6 +20,7 @@ toast:        🔒 Sensitive data masked before sending: 2
 
 - [Why](#why)
 - [Install](#install)
+- [Configuration](#configuration)
 - [How it works](#how-it-works)
 - [What is detected](#what-is-detected)
 - [The placeholder format](#the-placeholder-format)
@@ -53,7 +57,8 @@ What you will see:
 
 1. `Add marketplace?` naming `github:webdiego/redact-secrets`: answer `y`.
 2. The plugin's details and a choice of scope: pick **user** (applies to every session) with Enter.
-3. `Installed redact-secrets. Plugin is now active.` The mod runs immediately, no restart needed.
+3. A screen asking for the two [options](#configuration): which **countries** to cover and the **highlight color**. Press Enter on each to keep the defaults (`all`, `purple`).
+4. `Installed redact-secrets. Plugin is now active.` The mod runs immediately, no restart needed.
 
 From a shell:
 
@@ -73,16 +78,78 @@ claude plugin uninstall redact-secrets
 
 ---
 
+## Configuration
+
+At install time Claude Code asks for two options. Both can be changed later from `/config`, and the mod reloads with the new values right away.
+
+![The options screen shown at install](docs/install.svg)
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `countries` | text | `all` | Which countries' **national ID numbers** are masked: `all`, or ISO 3166 codes separated by commas, spaces or semicolons, in any case (`IT, US, GB`). Unknown codes are ignored. |
+| `color` | picker | `purple` | Background of the masked values in the transcript. |
+
+### Countries
+
+Emails, phone numbers, API keys, credit cards and IBANs are **always masked, for every country**: their formats are universal. The `countries` option adds the national ID formats below.
+
+| Code | Country | Document | Example |
+|------|---------|----------|---------|
+| `IT` | 🇮🇹 Italy | Codice fiscale | `RSSMRA85T10A562S` |
+| `US` | 🇺🇸 United States | Social Security Number | `123-45-6789` |
+| `GB` | 🇬🇧 United Kingdom | National Insurance number | `AB 12 34 56 C` |
+| `ES` | 🇪🇸 Spain | DNI / NIE | `12345678Z`, `X1234567L` |
+| `FR` | 🇫🇷 France | NIR (numéro de sécurité sociale) | `1 85 05 78 006 084 36` |
+| `BR` | 🇧🇷 Brazil | CPF | `123.456.789-09` |
+| `IN` | 🇮🇳 India | PAN | `ABCDE1234F` |
+| `MX` | 🇲🇽 Mexico | CURP | `GODE561231HDFRRN09` |
+| `CN` | 🇨🇳 China | Resident identity card | `11010519491231002X` |
+
+An ID made only of digits (a US SSN, a French NIR, a Chinese ID) is long enough to still be caught as a number when its country is switched off; it is then labelled `phone` or `card` instead of `id`. IDs with letters (codice fiscale, PAN, CURP, …) are masked only when their country is on.
+
+### Colors
+
+![The eight highlight colors](docs/colors.svg)
+
+| Value | Hex |
+|-------|-----|
+| `purple` *(default)* | `#bb9af7` |
+| `blue` | `#7aa2f7` |
+| `cyan` | `#7dcfff` |
+| `green` | `#9ece6a` |
+| `yellow` | `#e0af68` |
+| `orange` | `#ff9e64` |
+| `red` | `#f7768e` |
+| `pink` | `#ff79c6` |
+
+The palette is Tokyo Night's; the text on the chip is always dark (`#1a1b26`) for contrast.
+
+### Setting the options by hand
+
+Options live in `~/.claude/settings.json` under `pluginConfigs`:
+
+```json
+{
+  "pluginConfigs": {
+    "redact-secrets": {
+      "options": { "countries": "IT, ES", "color": "green" }
+    }
+  }
+}
+```
+
+---
+
 ## How it works
 
-The mod is a single hooks module, [`hooks/register.tsx`](hooks/register.tsx), with two hooks.
+The mod is a single hooks module, [`hooks/register.tsx`](hooks/register.tsx), with two hooks. When it loads, it reads its two options once: `countries` becomes the list of national ID patterns to apply, `color` the chip's background.
 
 ### 1. `prompt.submit`: masking
 
 Fires after you press Enter and before the prompt enters the session.
 
 1. Slash commands (`/compact`, `/review ...`) are passed through untouched.
-2. The text goes through `redact()`, which applies each detection pattern in a fixed order (see below).
+2. The text goes through `redact()`, which applies the chosen national ID patterns first, then each universal pattern in a fixed order (see below).
 3. The number of new placeholders is counted. Placeholders you typed yourself are subtracted, so they are never counted twice.
 4. If at least one value was masked, a toast is raised in your locale.
 5. The rewritten text is handed on with `next({ ...e, text })`. From here on, the engine, the model, the stored transcript and any other plugin see only the masked version.
@@ -117,10 +184,11 @@ Fires when the transcript draws one of your messages.
 
 ## What is detected
 
-Patterns run in this order. The order matters: API keys and IBANs are matched first, so their digits are not later taken as a phone or card number.
+Patterns run in this order. The order matters: national IDs, API keys and IBANs are matched first, so their digits are not later taken as a phone or card number.
 
 | # | Kind | What matches | Examples |
 |---|------|--------------|----------|
+| 0 | `id` | The national ID formats of the countries chosen in the [`countries` option](#countries) | `RSSMRA85T10A562S` → `⟦id:RSS•••⟧` |
 | 1 | `key` | OpenAI / Anthropic `sk-…`, `sk-ant-…`; GitHub `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_…`; AWS `AKIA…`; Google `AIza…`; Slack `xoxb-`, `xoxp-`, …; JWTs `eyJ….….…`; any 32+ character token that mixes letters and digits | `sk-ant-api03-…` → `⟦key:sk-•••⟧` |
 | 2 | `email` | Any `local@domain.tld`, Unicode letters included | `josé@müller.de` → `⟦email:jos•••⟧` |
 | 3 | `iban` | 2 letters + 2 digits + 3–7 groups of 4, spaces optional (all countries) | `DE89 3704 0044 0532 0130 00` → `⟦iban:DE8•••⟧` |
@@ -129,7 +197,7 @@ Patterns run in this order. The order matters: API keys and IBANs are matched fi
 
 **International digits.** Phone and card patterns use Unicode decimal digits (`\p{Nd}`), so Arabic-Indic (`٠١٢٣`), Persian (`۰۱۲۳`), Devanagari (`०१२३`) and other native numerals are detected like Latin ones.
 
-**The 8-digit floor.** For every kind except `email` and `key`, a match with fewer than 8 digits is left alone. This keeps years (`2024`), prices, versions, ports and short counts out of the mask.
+**The 8-digit floor.** For `phone`, `card` and `iban`, a match with fewer than 8 digits is left alone. This keeps years (`2024`), prices, versions, ports and short counts out of the mask.
 
 ---
 
@@ -140,7 +208,7 @@ Patterns run in this order. The order matters: API keys and IBANs are matched fi
 ```
 
 - `⟦` and `⟧` (U+27E6 / U+27E7) are rare enough to never collide with normal prose or code.
-- `<kind>` tells the model what was there (`email`, `phone`, `key`, `card`, `iban`), so it can still reason about the prompt ("send the invoice to ⟦email:mar•••⟧").
+- `<kind>` tells the model what was there (`email`, `phone`, `key`, `card`, `iban`, `id`), so it can still reason about the prompt ("send the invoice to ⟦email:mar•••⟧").
 - The 3 visible characters let **you** recognise which value was masked when several are in the same prompt.
 
 ---
@@ -150,10 +218,10 @@ Patterns run in this order. The order matters: API keys and IBANs are matched fi
 Each placeholder is drawn as:
 
 ```tsx
-<Text color="#1a1b26" backgroundColor="#bb9af7" bold>{` 🔒 ${prefix}••• `}</Text>
+<Text color="#1a1b26" backgroundColor={background} bold>{` 🔒 ${prefix}••• `}</Text>
 ```
 
-Dark text on the Tokyo Night purple. Terminals without true-color support fall back to the nearest available color.
+`background` is the hex of the [`color` option](#colors), purple by default. Terminals without true-color support fall back to the nearest available color.
 
 ---
 
@@ -187,22 +255,25 @@ Translations were written by the author, not reviewed by native speakers. Correc
 ```
 redact-secrets/
 ├── .claude-plugin/
-│   ├── plugin.json          # mod manifest: name, version, description
+│   ├── plugin.json          # mod manifest: name, version, options (userConfig)
 │   └── marketplace.json     # makes this repo installable with one line
 ├── hooks/
 │   ├── hooks.json           # points the engine at register.tsx
-│   ├── register.tsx         # the mod: patterns, redact(), toastText(), hooks
+│   ├── register.tsx         # the mod: patterns, redact(), countryIds(), toastText(), hooks
 │   ├── register.test.ts     # unit tests for the pure functions
 │   └── hooks.test.tsx       # integration tests through the real hook chain
+├── docs/                    # README illustrations (SVG)
 ├── tsconfig.json            # extends the types the engine writes on load
 ├── LICENSE
 └── README.md
 ```
 
-`register.tsx` exports two pure functions so they can be tested on their own:
+`register.tsx` exports pure functions and tables so they can be tested on their own:
 
-- `redact(text: string): string`
+- `redact(text: string, ids?: RegExp[]): string`: masks `text`; `ids` defaults to every country
+- `countryIds(countries: string): RegExp[]`: turns the `countries` option into patterns
 - `toastText(locale: string | undefined, count: number): string`
+- `NATIONAL_IDS`, `COLORS`: the country and color tables
 
 ---
 
@@ -224,12 +295,16 @@ hooks/hooks.test.tsx:
 (pass) a prompt with nothing sensitive passes unchanged and raises no toast
 (pass) a masked value is drawn highlighted in the transcript
 (pass) a message with nothing masked is left to the engine
+(pass) the countries option limits which national IDs are masked
+(pass) the color option paints the highlight
 
 hooks/register.test.ts:
 (pass) masks secrets to their first 3 characters
 (pass) the toast speaks the locale, English otherwise
+(pass) masks national ID numbers
+(pass) only the chosen countries mask their national IDs
 
- 6 pass
+ 10 pass
  0 fail
 ```
 
@@ -262,6 +337,31 @@ hooks/register.test.ts:
 | `xx_XX` | English fallback |
 | `undefined` | English fallback |
 
+**`masks national ID numbers`** checks one ID per country, with every country on:
+
+| Input | Expected | Country |
+|-------|----------|---------|
+| `cf RSSMRA85T10A562S` | `cf ⟦id:RSS•••⟧` | 🇮🇹 codice fiscale |
+| `ssn 123-45-6789` | `ssn ⟦id:123•••⟧` | 🇺🇸 SSN |
+| `nino AB 12 34 56 C` | `nino ⟦id:AB •••⟧` | 🇬🇧 NINO |
+| `dni 12345678Z` | `dni ⟦id:123•••⟧` | 🇪🇸 DNI |
+| `nir 1 85 05 78 006 084 36` | `nir ⟦id:1 8•••⟧` | 🇫🇷 NIR |
+| `cpf 123.456.789-09` | `cpf ⟦id:123•••⟧` | 🇧🇷 CPF |
+| `pan ABCDE1234F` | `pan ⟦id:ABC•••⟧` | 🇮🇳 PAN |
+| `curp GODE561231HDFRRN09` | `curp ⟦id:GOD•••⟧` | 🇲🇽 CURP |
+| `id 11010519491231002X` | `id ⟦id:110•••⟧` | 🇨🇳 resident ID |
+
+**`only the chosen countries mask their national IDs`** checks `countryIds()` with `redact()`:
+
+| `countries` | Input | Expected | Checks |
+|-------------|-------|----------|--------|
+| `IT` | `cf RSSMRA85T10A562S pan ABCDE1234F` | only the codice fiscale masked | one country |
+| ` in , gb` | same | only the PAN masked | spaces, lowercase, list |
+| `all` | same | both masked | the keyword |
+| `XX` | — | no patterns | unknown code ignored |
+| `XX` | `mail a.b@c.io` | email masked | universal kinds always on |
+| `IT` | `ssn 123-45-6789` | `⟦phone:123•••⟧` | digit-only IDs still caught as numbers |
+
 ### `hooks/hooks.test.tsx`: integration tests
 
 These run the real hooks through the engine's event chain, not just the helper functions.
@@ -272,6 +372,10 @@ These run the real hooks through the engine's event chain, not just the helper f
 | **a prompt with nothing sensitive passes unchanged and raises no toast** | no locale; submits `refactor the login page` | text unchanged; no toast at all |
 | **a masked value is drawn highlighted in the transcript** | mounts a `UserMessage` row on the terminal surface with a placeholder | the row draws `> mail  🔒 mar•••  ok` |
 | **a message with nothing masked is left to the engine** | mounts a `UserMessage` row with plain text | the mod calls `next(e)` and the engine's own drawing is shown |
+| **the countries option limits which national IDs are masked** | option `countries: 'IT'`; submits a codice fiscale and a PAN | only the codice fiscale reaches the engine masked |
+| **the color option paints the highlight** | option `color: 'green'`; mounts a row with a placeholder | the chip's `backgroundColor` is `#9ece6a` |
+
+Options are passed with `test(name, { options }, body)`, which the kit reads exactly as values stored in settings.
 
 ---
 
@@ -296,13 +400,18 @@ These run the real hooks through the engine's event chain, not just the helper f
 | `prompt.submit`: `LANG` read through `$.env.get` | hooks.test: masked prompt | ✅ |
 | `ui.render`: placeholder drawn as chip | hooks.test: highlighted row | ✅ |
 | `ui.render`: no placeholder → `next(e)` | hooks.test: engine row | ✅ |
+| `NATIONAL_IDS`: all 9 country patterns | register.test: national IDs | ✅ |
+| `countryIds()`: one code, a list, `all`, unknown code | register.test: chosen countries | ✅ |
+| `countries` option read at load and applied | hooks.test: countries option | ✅ |
+| `color` option read at load and painted | hooks.test: color option | ✅ |
+| `color` option: unknown value falls back to purple | — | ⚠️ not tested |
 | `prompt.submit`: slash command passed through | — | ⚠️ not tested |
 | `prompt.submit`: `LC_ALL` / `LC_MESSAGES` precedence over `LANG` | — | ⚠️ not tested |
 | `prompt.submit`: placeholders already in the prompt not re-counted | — | ⚠️ not tested |
 | `redact()`: other key prefixes (`ghp_`, `AKIA`, `AIza`, `xox`, JWT, generic 32+) | — | ⚠️ not tested |
 | `ui.render` on `desktop` / `vscode` / `mobile` surfaces | — | ⚠️ not tested |
 
-**Summary:** 13 of 18 tracked paths covered (~72%). Every branch of both hooks is exercised at least once. The gaps are additional inputs to branches that are already covered (other key formats, other locale variables) and the non-terminal surfaces.
+**Summary:** 17 of 23 tracked paths covered (~74%). Every branch of both hooks and both options is exercised at least once. The gaps are additional inputs to branches that are already covered (other key formats, other locale variables, an invalid color) and the non-terminal surfaces.
 
 ### Countries covered by tests
 
@@ -311,6 +420,7 @@ These run the real hooks through the engine's event chain, not just the helper f
 | Phone | 🇮🇹 Italy, 🇺🇸 USA, 🇬🇧 UK, 🇩🇪 Germany, Arabic-Indic digits |
 | IBAN | 🇮🇹 Italy, 🇩🇪 Germany |
 | Email | ASCII, Unicode (accented local part and domain) |
+| National ID | 🇮🇹 🇺🇸 🇬🇧 🇪🇸 🇫🇷 🇧🇷 🇮🇳 🇲🇽 🇨🇳 (one each) |
 
 Contributions adding test cases for more countries are welcome: add a line to `register.test.ts`.
 
@@ -342,9 +452,10 @@ npx tsc -p .
 
 Everything lives in `hooks/register.tsx`.
 
-- **Add a pattern:** append `['kind', /regex/gu]` to `PATTERNS`. Put more specific patterns before more generic ones.
+- **Add a country:** add `XX: /regex/g` to `NATIONAL_IDS`, a line to the `countries` description in `plugin.json`, and a test case.
+- **Add a universal pattern:** append `['kind', /regex/gu]` to `PATTERNS`. Put more specific patterns before more generic ones.
+- **Add a color:** add it to `COLORS` and to the `color` option's `options` list in `plugin.json`.
 - **Show more or fewer characters:** change `m.slice(0, 3)` in `redact()`.
-- **Change the highlight color:** edit `color` and `backgroundColor` on the chip's `<Text>`.
 - **Add or fix a translation:** add a key to `LABELS` (the lowercase ISO 639-1 code).
 - **Change the digit floor:** change the `< 8` in `redact()`.
 
@@ -355,7 +466,8 @@ Everything lives in `hooks/register.tsx`.
 - **Regex based.** False positives (a long ID taken for a key, a long order number taken for a phone) and misses are possible. It is a safety net, not a guarantee.
 - **The first 3 characters reach the model.** That is by design, so you can tell values apart. For an email that is the start of a name; for a key it is usually the public prefix (`sk-`, `ghp`).
 - **Short local numbers pass.** Phone numbers with fewer than 8 digits are not masked.
-- **National ID numbers are not covered** (Italian codice fiscale, US SSN, etc.): their formats vary by country.
+- **Only 9 countries have national ID patterns.** Other countries' IDs are masked only if they are long enough to look like a number.
+- **ID patterns check the format, not the checksum.** A random string with the right shape is masked too.
 - **Only your prompt is masked.** Files Claude reads with tools, command output and the model's replies are not touched.
 - **Slash command arguments are not masked.**
 - **The original value is not kept anywhere.** It cannot be restored later in the conversation.

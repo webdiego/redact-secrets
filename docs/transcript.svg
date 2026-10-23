@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="300" viewBox="0 0 900 300" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="15">
+  <rect width="900" height="300" rx="12" fill="#1a1b26"/>
+  <rect width="900" height="36" rx="12" fill="#16161e"/>
+  <rect y="24" width="900" height="12" fill="#16161e"/>
+  <circle cx="22" cy="18" r="6" fill="#f7768e"/><circle cx="42" cy="18" r="6" fill="#e0af68"/><circle cx="62" cy="18" r="6" fill="#9ece6a"/>
+  <text x="450" y="23" fill="#565f89" text-anchor="middle" font-size="13">claude — redact-secrets</text>
+
+  <text x="24" y="80" fill="#565f89">&gt;</text>
+  <text x="44" y="80" fill="#c0caf5">write to</text>
+  <rect x="128" y="63" width="104" height="23" rx="3" fill="#bb9af7"/>
+  <text x="134" y="80" fill="#1a1b26" font-weight="bold">🔒 mar•••</text>
+  <text x="240" y="80" fill="#c0caf5">, tel</text>
+  <rect x="294" y="63" width="104" height="23" rx="3" fill="#bb9af7"/>
+  <text x="300" y="80" fill="#1a1b26" font-weight="bold">🔒 +39•••</text>
+  <text x="406" y="80" fill="#c0caf5">, my tax code is</text>
+  <rect x="560" y="63" width="104" height="23" rx="3" fill="#bb9af7"/>
+  <text x="566" y="80" fill="#1a1b26" font-weight="bold">🔒 RSS•••</text>
+
+  <text x="24" y="124" fill="#c0caf5">⏺</text>
+  <text x="44" y="124" fill="#c0caf5">Here is a draft for ⟦email:mar•••⟧. I left the phone and tax code</text>
+  <text x="44" y="146" fill="#c0caf5">as placeholders, since they were masked before reaching me.</text>
+
+  <rect x="24" y="200" width="852" height="42" rx="6" fill="none" stroke="#3b4261"/>
+  <text x="40" y="226" fill="#565f89">&gt;</text>
+
+  <rect x="520" y="256" width="356" height="30" rx="6" fill="#24283b" stroke="#bb9af7"/>
+  <text x="536" y="276" fill="#c0caf5" font-size="14">🔒 Sensitive data masked before sending: 3</text>
+</svg>

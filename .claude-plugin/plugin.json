@@ -1,1 +1,32 @@
-{ "name": "redact-secrets", "version": "0.1.0", "description": "Masks emails, phone numbers, API keys, cards and IBANs in prompts before they are sent" }
+{
+  "name": "redact-secrets",
+  "version": "0.2.0",
+  "description": "Masks emails, phone numbers, API keys, cards, IBANs and national IDs in prompts before they are sent",
+  "license": "MIT",
+  "userConfig": {
+    "countries": {
+      "type": "string",
+      "title": "Countries",
+      "description": "Countries whose national ID numbers are masked: \"all\", or ISO codes separated by commas (IT, US, GB, ES, FR, BR, IN, MX, CN). Emails, phones, API keys, cards and IBANs are masked for every country.",
+      "required": false,
+      "default": "all"
+    },
+    "color": {
+      "type": "string",
+      "title": "Highlight color",
+      "description": "Color of the masked values in the transcript.",
+      "required": false,
+      "default": "purple",
+      "options": [
+        "purple",
+        "blue",
+        "cyan",
+        "green",
+        "yellow",
+        "orange",
+        "red",
+        "pink"
+      ]
+    }
+  }
+}

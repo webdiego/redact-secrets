@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="260" viewBox="0 0 900 260" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="15">
+  <rect width="900" height="260" rx="12" fill="#1a1b26"/>
+  <text x="32" y="44" fill="#7aa2f7" font-weight="bold">Configure redact-secrets</text>
+
+  <text x="32" y="86" fill="#c0caf5" font-weight="bold">Countries</text>
+  <text x="32" y="106" fill="#565f89" font-size="13">"all", or ISO codes separated by commas (IT, US, GB, ES, FR, BR, IN, MX, CN)</text>
+  <rect x="32" y="116" width="400" height="30" rx="4" fill="#24283b" stroke="#7aa2f7"/>
+  <text x="44" y="136" fill="#c0caf5">IT, US, GB</text>
+  <rect x="139" y="122" width="2" height="18" fill="#c0caf5"/>
+
+  <text x="32" y="182" fill="#c0caf5" font-weight="bold">Highlight color</text>
+  <rect x="32" y="194" width="400" height="30" rx="4" fill="#24283b" stroke="#3b4261"/>
+  <rect x="44" y="202" width="14" height="14" rx="2" fill="#bb9af7"/>
+  <text x="66" y="214" fill="#c0caf5">purple</text>
+  <text x="414" y="214" fill="#565f89" text-anchor="end">▾</text>
+
+  <text x="868" y="244" fill="#565f89" font-size="12" text-anchor="end">Enter to save · Esc to skip (defaults apply)</text>
+</svg>

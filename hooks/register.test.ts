@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { redact, toastText } from './register'
+import { countryIds, redact, toastText } from './register'
 
 test('masks secrets to their first 3 characters', async () => {
   expect(redact('mail mario.rossi@gmail.com ok')).toBe('mail ⟦email:mar•••⟧ ok')
@@ -22,4 +22,28 @@ test('the toast speaks the locale, English otherwise', async () => {
   expect(toastText('pt-BR', 3)).toBe('🔒 Dados sensíveis ocultados antes do envio: 3')
   expect(toastText('xx_XX', 1)).toBe('🔒 Sensitive data masked before sending: 1')
   expect(toastText(undefined, 1)).toBe('🔒 Sensitive data masked before sending: 1')
+})
+
+test('masks national ID numbers', async () => {
+  expect(redact('cf RSSMRA85T10A562S')).toBe('cf ⟦id:RSS•••⟧')
+  expect(redact('ssn 123-45-6789')).toBe('ssn ⟦id:123•••⟧')
+  expect(redact('nino AB 12 34 56 C')).toBe('nino ⟦id:AB •••⟧')
+  expect(redact('dni 12345678Z')).toBe('dni ⟦id:123•••⟧')
+  expect(redact('nir 1 85 05 78 006 084 36')).toBe('nir ⟦id:1 8•••⟧')
+  expect(redact('cpf 123.456.789-09')).toBe('cpf ⟦id:123•••⟧')
+  expect(redact('pan ABCDE1234F')).toBe('pan ⟦id:ABC•••⟧')
+  expect(redact('curp GODE561231HDFRRN09')).toBe('curp ⟦id:GOD•••⟧')
+  expect(redact('id 11010519491231002X')).toBe('id ⟦id:110•••⟧')
+})
+
+test('only the chosen countries mask their national IDs', async () => {
+  const text = 'cf RSSMRA85T10A562S pan ABCDE1234F'
+  expect(redact(text, countryIds('IT'))).toBe('cf ⟦id:RSS•••⟧ pan ABCDE1234F')
+  expect(redact(text, countryIds(' in , gb'))).toBe('cf RSSMRA85T10A562S pan ⟦id:ABC•••⟧')
+  expect(redact(text, countryIds('all'))).toBe('cf ⟦id:RSS•••⟧ pan ⟦id:ABC•••⟧')
+  // An ID made only of digits is still masked as a number when its country is off.
+  expect(redact('ssn 123-45-6789', countryIds('IT'))).toBe('ssn ⟦phone:123•••⟧')
+  expect(countryIds('XX')).toEqual([])
+  // Universal kinds stay on whatever the countries.
+  expect(redact('mail a.b@c.io', countryIds('XX'))).toBe('mail ⟦email:a.b•••⟧')
 })

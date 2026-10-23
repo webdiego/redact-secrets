@@ -1,5 +1,18 @@
 import type { Register } from 'claude-code'
 
+// National ID numbers, switched on per country by the `countries` option.
+export const NATIONAL_IDS: Record<string, RegExp> = {
+  IT: /\b[A-Z]{6}\d{2}[A-EHLMPR-T]\d{2}[A-Z]\d{3}[A-Z]\b/gi, // codice fiscale
+  US: /\b\d{3}-\d{2}-\d{4}\b/g, // SSN
+  GB: /\b[A-CEGHJ-PR-TW-Z]{2} ?\d{2} ?\d{2} ?\d{2} ?[A-D]\b/g, // National Insurance number
+  ES: /\b(?:\d{8}|[XYZ]\d{7})[A-Z]\b/g, // DNI / NIE
+  FR: /\b[12] ?\d{2} ?\d{2} ?(?:\d{2}|2[AB]) ?\d{3} ?\d{3} ?\d{2}\b/g, // NIR (sécurité sociale)
+  BR: /\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, // CPF
+  IN: /\b[A-Z]{5}\d{4}[A-Z]\b/g, // PAN (Aadhaar's 12 digits are caught as a number)
+  MX: /\b[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b/g, // CURP
+  CN: /\b\d{17}[\dX]\b/g, // resident identity card
+}
+
 // Order matters: keys and IBANs before phones, so their digits are not taken as a number.
 const PATTERNS: [string, RegExp][] = [
   ['key', /\b(?:sk-[A-Za-z0-9_-]{16,}|sk-ant-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[abposr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|[A-Za-z0-9_-]*(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,})\b/g],
@@ -13,12 +26,35 @@ const PATTERNS: [string, RegExp][] = [
 // What the model and the transcript see in place of a secret: its first 3 characters.
 const MASK = /⟦(\w+):([^⟧]*)•••⟧/g
 
-export const redact = (text: string) =>
-  PATTERNS.reduce(
+// "all", or a list like "IT, us,GB": the countries whose national IDs are masked.
+export const countryIds = (countries: string) =>
+  countries.trim().toLowerCase() === 'all'
+    ? Object.values(NATIONAL_IDS)
+    : countries.toUpperCase().split(/[\s,;]+/).flatMap(c => NATIONAL_IDS[c] ?? [])
+
+export const redact = (text: string, ids: RegExp[] = Object.values(NATIONAL_IDS)) =>
+  [...ids.map(re => ['id', re] as [string, RegExp]), ...PATTERNS].reduce(
     (t, [kind, re]) =>
-      t.replace(re, m => ((m.match(/\p{Nd}/gu) ?? []).length < 8 && kind !== 'email' && kind !== 'key' ? m : `⟦${kind}:${m.slice(0, 3)}•••⟧`)),
+      t.replace(re, m =>
+        // Fewer than 8 digits is a year, a price, a count: left alone.
+        (kind === 'card' || kind === 'phone' || kind === 'iban') && (m.match(/\p{Nd}/gu) ?? []).length < 8
+          ? m
+          : `⟦${kind}:${m.slice(0, 3)}•••⟧`,
+      ),
     text,
   )
+
+// Tokyo Night palette; the `color` option picks one.
+export const COLORS: Record<string, string> = {
+  purple: '#bb9af7',
+  blue: '#7aa2f7',
+  cyan: '#7dcfff',
+  green: '#9ece6a',
+  yellow: '#e0af68',
+  orange: '#ff9e64',
+  red: '#f7768e',
+  pink: '#ff79c6',
+}
 
 // One neutral "label: n" form per language, so no plural rules are needed.
 const LABELS: Record<string, string> = {
@@ -63,10 +99,13 @@ const LABELS: Record<string, string> = {
 export const toastText = (locale: string | undefined, count: number) =>
   `🔒 ${LABELS[(locale ?? '').toLowerCase().split(/[_.@-]/)[0]] ?? LABELS.en}: ${count}`
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  const ids = countryIds(String(options.countries ?? 'all'))
+  const background = COLORS[String(options.color)] ?? COLORS.purple
+
   on('prompt.submit', async ($, e, next) => {
     if (e.command) return next(e)
-    const text = redact(e.text)
+    const text = redact(e.text, ids)
     const count = (text.match(MASK) ?? []).length - (e.text.match(MASK) ?? []).length
     if (count > 0) {
       const locale = (await $.env.get('LC_ALL')) || (await $.env.get('LC_MESSAGES')) || (await $.env.get('LANG'))
@@ -85,7 +124,7 @@ export const register: Register = on => {
     for (const m of text.matchAll(MASK)) {
       parts.push(text.slice(last, m.index))
       parts.push(
-        <Text color="#1a1b26" backgroundColor="#bb9af7" bold>
+        <Text color="#1a1b26" backgroundColor={background} bold>
           {` 🔒 ${m[2]}••• `}
         </Text>,
       )

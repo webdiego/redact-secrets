@@ -62,3 +62,24 @@ test('a message with nothing masked is left to the engine', async ($, on) => {
   expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
   await ui.unmount()
 })
+
+test('the countries option limits which national IDs are masked', { options: { countries: 'IT' } }, async ($, on) => {
+  on('env.get', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+
+  const result = await $.prompt.submit({ text: 'cf RSSMRA85T10A562S pan ABCDE1234F' })
+
+  expect(result.text).toBe('cf ⟦id:RSS•••⟧ pan ABCDE1234F')
+})
+
+test('the color option paints the highlight', { options: { color: 'green' } }, async ($, on) => {
+  const ui = await $.ui.mount({
+    ...MESSAGE,
+    props: { text: '⟦email:mar•••⟧', origin: { kind: 'composer' }, isExpanded: true },
+  })
+
+  const chip = await ui.find({ type: 'Text', text: /^ 🔒 mar••• $/ })
+  expect(chip?.props.backgroundColor).toBe('#9ece6a')
+  await ui.unmount()
+})
