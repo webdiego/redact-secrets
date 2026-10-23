@@ -14,9 +14,23 @@ export const NATIONAL_IDS: Record<string, RegExp> = {
   CN: /\b\d{17}[\dX]\b/g, // resident identity card
 }
 
-// Order matters: keys and IBANs before phones, so their digits are not taken as a number.
+// Run before national IDs, so no ID pattern takes a piece of a key.
+const SECRETS: [string, RegExp][] = [
+  ['key', /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g],
+  ['key', /(?<=\bBearer\s+)[A-Za-z0-9._~+\/-]{16,}=*/g],
+  ['key', /\b(?:sk-[A-Za-z0-9_-]{16,}|sk-ant-[A-Za-z0-9_-]{16,}|[rs]k_(?:live|test)_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[abposr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|[A-Za-z0-9_-]*(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,})\b/g],
+  // The password in scheme://user:password@host.
+  ['secret', /(?<=:\/\/[^\s:@\/]*:)[^\s@\/]+(?=@)/g],
+  // The value of PASSWORD=…, "api_key": "…", client_secret: …; not env lookups like process.env.X or ${X}.
+  // (?<!⟦): the `secret:` label of a placeholder is not an assignment.
+  ['secret', /(?<=(?<!⟦)(?:passw(?:or)?d|pwd|secret(?:[_-]?key)?|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*["']?)(?![$%{(<]|[A-Za-z_]\w*[.([])[^\s"'`,;]{4,}/gi],
+]
+
+// Dates, times and IPv4 addresses look like phone numbers but are not secret.
+const NOT_A_PHONE = /^(?:\d{4}-\d{2}-\d{2}|\d{1,2}([./-])\d{1,2}\1\d{4})(?: \d{1,2})?$|^\d{1,3}(?:\.\d{1,3}){3}$/
+
+// Order matters: IBANs before phones, so their digits are not taken as a number.
 const PATTERNS: [string, RegExp][] = [
-  ['key', /\b(?:sk-[A-Za-z0-9_-]{16,}|sk-ant-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[abposr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|[A-Za-z0-9_-]*(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,})\b/g],
   // \p{L}/\p{Nd}: international addresses (josé@müller.de) and non-Latin digits (Arabic, Persian, Devanagari).
   ['email', /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.\p{L}{2,}/gu],
   ['iban', /\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,3})?\b/g],
@@ -34,11 +48,12 @@ export const countryIds = (countries: string) =>
     : countries.toUpperCase().split(/[\s,;]+/).flatMap(c => NATIONAL_IDS[c] ?? [])
 
 export const redact = (text: string, ids: RegExp[] = Object.values(NATIONAL_IDS)) =>
-  [...ids.map(re => ['id', re] as [string, RegExp]), ...PATTERNS].reduce(
+  [...SECRETS, ...ids.map(re => ['id', re] as [string, RegExp]), ...PATTERNS].reduce(
     (t, [kind, re]) =>
       t.replace(re, m =>
         // Fewer than 8 digits is a year, a price, a count: left alone.
-        (kind === 'card' || kind === 'phone' || kind === 'iban') && (m.match(/\p{Nd}/gu) ?? []).length < 8
+        ((kind === 'card' || kind === 'phone' || kind === 'iban') && (m.match(/\p{Nd}/gu) ?? []).length < 8) ||
+        (kind === 'phone' && NOT_A_PHONE.test(m))
           ? m
           : `⟦${kind}:${m.slice(0, 3)}•••⟧`,
       ),
@@ -134,7 +149,7 @@ export const register: Register = (on, options) => {
             <Text bold>redact-secrets</Text>
             <Text dimColor> · countries: {countries} · color: {color}</Text>
           </Text>
-          <Text dimColor>Emails, phones, API keys, cards, IBANs and national IDs are masked before they are sent.</Text>
+          <Text dimColor>Emails, phones, API keys, passwords, cards, IBANs and national IDs are masked before they are sent.</Text>
         </Box>
         <Button
           key="dismiss"

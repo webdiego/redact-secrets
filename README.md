@@ -6,7 +6,7 @@
 
 > A Claude Code mod that masks sensitive data in your prompts **before they leave your machine**.
 
-Emails, phone numbers, API keys, credit card numbers, IBANs and national ID numbers typed (or pasted) into the Claude Code prompt are replaced with a short placeholder that keeps only their first 3 characters. The model never receives the full value. In your transcript the masked value is highlighted, and a toast tells you how many items were masked, in your system language.
+Emails, phone numbers, API keys, passwords, credit card numbers, IBANs and national ID numbers typed (or pasted) into the Claude Code prompt are replaced with a short placeholder that keeps only their first 3 characters. The model never receives the full value. In your transcript the masked value is highlighted, and a toast tells you how many items were masked, in your system language.
 
 ![Masked values highlighted in the Claude Code transcript, with the toast counting them](docs/transcript.svg)
 
@@ -190,12 +190,14 @@ Fires when the transcript draws one of your messages.
 
 ## What is detected
 
-Patterns run in this order. The order matters: national IDs, API keys and IBANs are matched first, so their digits are not later taken as a phone or card number.
+Patterns run in this order. The order matters: keys and secrets come first, so no ID pattern takes a piece of a key; national IDs and IBANs come before phones and cards, so their digits are not later taken as a number.
 
 | # | Kind | What matches | Examples |
 |---|------|--------------|----------|
+| 0 | `key` | Private key blocks `-----BEGIN … PRIVATE KEY-----` … `-----END … PRIVATE KEY-----` (whole block); `Bearer` tokens | `Bearer abc.def…` → `Bearer ⟦key:abc•••⟧` |
+| 0 | `secret` | The password in `scheme://user:password@host`; the value after a name ending in `password`, `passwd`, `pwd`, `secret`, `secret_key`, `token`, `api_key`, `access_key`, `private_key` and `=` or `:` (not env lookups like `process.env.X`, `${X}`) | `PASSWORD=hunter2` → `PASSWORD=⟦secret:hun•••⟧` |
 | 0 | `id` | The national ID formats of the countries chosen in the [`countries` option](#countries) | `RSSMRA85T10A562S` → `⟦id:RSS•••⟧` |
-| 1 | `key` | OpenAI / Anthropic `sk-…`, `sk-ant-…`; GitHub `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_…`; AWS `AKIA…`; Google `AIza…`; Slack `xoxb-`, `xoxp-`, …; JWTs `eyJ….….…`; any 32+ character token that mixes letters and digits | `sk-ant-api03-…` → `⟦key:sk-•••⟧` |
+| 1 | `key` | OpenAI / Anthropic `sk-…`, `sk-ant-…`; Stripe `sk_live_…`, `rk_test_…`; GitHub `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_…`; AWS `AKIA…`; Google `AIza…`; Slack `xoxb-`, `xoxp-`, …; JWTs `eyJ….….…`; any 32+ character token that mixes letters and digits | `sk-ant-api03-…` → `⟦key:sk-•••⟧` |
 | 2 | `email` | Any `local@domain.tld`, Unicode letters included | `josé@müller.de` → `⟦email:jos•••⟧` |
 | 3 | `iban` | 2 letters + 2 digits + 3–7 groups of 4, spaces optional (all countries) | `DE89 3704 0044 0532 0130 00` → `⟦iban:DE8•••⟧` |
 | 4 | `card` | 13–19 digits, spaces or dashes allowed | `4111 1111 1111 1111` → `⟦card:411•••⟧` |
@@ -204,6 +206,8 @@ Patterns run in this order. The order matters: national IDs, API keys and IBANs 
 **International digits.** Phone and card patterns use Unicode decimal digits (`\p{Nd}`), so Arabic-Indic (`٠١٢٣`), Persian (`۰۱۲۳`), Devanagari (`०१२३`) and other native numerals are detected like Latin ones.
 
 **The 8-digit floor.** For `phone`, `card` and `iban`, a match with fewer than 8 digits is left alone. This keeps years (`2024`), prices, versions, ports and short counts out of the mask.
+
+**Not phones.** Dates (`2026-10-23 12:30`, `23/10/2026`) and IPv4 addresses (`192.168.1.20`) are left alone, so pasted logs stay readable.
 
 ---
 
@@ -214,7 +218,7 @@ Patterns run in this order. The order matters: national IDs, API keys and IBANs 
 ```
 
 - `⟦` and `⟧` (U+27E6 / U+27E7) are rare enough to never collide with normal prose or code.
-- `<kind>` tells the model what was there (`email`, `phone`, `key`, `card`, `iban`, `id`), so it can still reason about the prompt ("send the invoice to ⟦email:mar•••⟧").
+- `<kind>` tells the model what was there (`email`, `phone`, `key`, `secret`, `card`, `iban`, `id`), so it can still reason about the prompt ("send the invoice to ⟦email:mar•••⟧").
 - The 3 visible characters let **you** recognise which value was masked when several are in the same prompt.
 
 ---
@@ -237,7 +241,7 @@ The first time Claude Code starts with the mod installed, a band above the promp
 
 ```
  ⟦•••⟧  redact-secrets · countries: all · color: purple                    [ Got it ]
-        Emails, phones, API keys, cards, IBANs and national IDs are masked before they are sent.
+        Emails, phones, API keys, passwords, cards, IBANs and national IDs are masked before they are sent.
 ```
 
 The `⟦•••⟧` mark is drawn in your highlight color. **Got it** dismisses it for good (remembered across sessions). Type `/redact-secrets` at any time to bring it back and print the current settings.
@@ -330,11 +334,13 @@ hooks/hooks.test.tsx:
 
 hooks/register.test.ts:
 (pass) masks secrets to their first 3 characters
+(pass) masks passwords, credentials in URLs and private keys
+(pass) dates, times and IP addresses are not phone numbers
 (pass) the toast speaks the locale, English otherwise
 (pass) masks national ID numbers
 (pass) only the chosen countries mask their national IDs
 
- 12 pass
+ 14 pass
  0 fail
 ```
 

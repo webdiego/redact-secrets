@@ -16,6 +16,28 @@ test('masks secrets to their first 3 characters', async () => {
   expect(redact('ho 3 gatti e 2024 anni')).toBe('ho 3 gatti e 2024 anni')
 })
 
+test('masks passwords, credentials in URLs and private keys', async () => {
+  expect(redact('PASSWORD=hunter2isgood')).toBe('PASSWORD=⟦secret:hun•••⟧')
+  expect(redact('{"api_key": "abc123xyz"}')).toBe('{"api_key": "⟦secret:abc•••⟧"}')
+  expect(redact('GITHUB_TOKEN: x9y8z7w6')).toBe('GITHUB_TOKEN: ⟦secret:x9y•••⟧')
+  expect(redact('postgres://admin:S3cretPass@localhost:5432/app')).toBe('postgres://admin:⟦secret:S3c•••⟧@localhost:5432/app')
+  expect(redact('stripe sk_live_51HxAbCdEfGhIjKlMn')).toBe('stripe ⟦key:sk_•••⟧')
+  expect(redact('Authorization: Bearer abc.def-ghi_jkl0123456')).toBe('Authorization: Bearer ⟦key:abc•••⟧')
+  expect(redact('-----BEGIN OPENSSH PRIVATE KEY-----\nb3Blbn\nNzaC1r\n-----END OPENSSH PRIVATE KEY-----')).toBe('⟦key:---•••⟧')
+  // Env lookups and token counts are code, not secrets.
+  expect(redact('const apiKey = process.env.API_KEY')).toBe('const apiKey = process.env.API_KEY')
+  expect(redact('password: ${DB_PASSWORD}')).toBe('password: ${DB_PASSWORD}')
+  expect(redact('max_tokens=4096')).toBe('max_tokens=4096')
+})
+
+test('dates, times and IP addresses are not phone numbers', async () => {
+  expect(redact('at 2026-10-23 12:30:45')).toBe('at 2026-10-23 12:30:45')
+  expect(redact('on 23/10/2026')).toBe('on 23/10/2026')
+  expect(redact('host 192.168.100.200')).toBe('host 192.168.100.200')
+  // A phone after a date is still masked (its 13 digits read as a card).
+  expect(redact('2026-10-23 333 123 4567')).toBe('⟦card:202•••⟧')
+})
+
 test('the toast speaks the locale, English otherwise', async () => {
   expect(toastText('it_IT.UTF-8', 2)).toBe("🔒 Dati sensibili oscurati prima dell'invio: 2")
   expect(toastText('ja_JP.UTF-8', 1)).toBe('🔒 送信前に機密データをマスクしました: 1')

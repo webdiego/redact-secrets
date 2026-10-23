@@ -1,7 +1,7 @@
 {
   "name": "redact-secrets",
-  "version": "0.3.0",
-  "description": "Masks emails, phone numbers, API keys, cards, IBANs and national IDs in prompts before they are sent",
+  "version": "0.4.0",
+  "description": "Masks emails, phone numbers, API keys, passwords, cards, IBANs and national IDs in prompts before they are sent",
   "author": {
     "name": "webdiego"
   },
