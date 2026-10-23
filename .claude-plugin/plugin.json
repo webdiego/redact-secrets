@@ -1,7 +1,10 @@
 {
   "name": "redact-secrets",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Masks emails, phone numbers, API keys, cards, IBANs and national IDs in prompts before they are sent",
+  "author": {
+    "name": "webdiego"
+  },
   "license": "MIT",
   "userConfig": {
     "countries": {
@@ -28,5 +31,7 @@
         "pink"
       ]
     }
-  }
+  },
+  "types": "./types/index.d.ts",
+  "icon": "./.claude-plugin/icon.png"
 }

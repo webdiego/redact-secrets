@@ -1,3 +1,4 @@
+import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 // National ID numbers, switched on per country by the `countries` option.
@@ -99,9 +100,53 @@ const LABELS: Record<string, string> = {
 export const toastText = (locale: string | undefined, count: number) =>
   `🔒 ${LABELS[(locale ?? '').toLowerCase().split(/[_.@-]/)[0]] ?? LABELS.en}: ${count}`
 
+const isBannerShown = atom({ plugin: 'redact-secrets', key: 'isBannerShown' } as const, false)
+
 export const register: Register = (on, options) => {
-  const ids = countryIds(String(options.countries ?? 'all'))
-  const background = COLORS[String(options.color)] ?? COLORS.purple
+  const countries = String(options.countries ?? 'all')
+  const color = String(options.color ?? 'purple')
+  const ids = countryIds(countries)
+  const background = COLORS[color] ?? COLORS.purple
+
+  on('session.start', async ($, e, next) => {
+    await $.command.register({ name: 'redact-secrets', description: 'Show the redact-secrets banner and its settings' })
+    // The banner greets once, on the first session after install.
+    if (!(await $.store.get('welcomed'))) await update($, isBannerShown, () => true)
+    return next(e)
+  })
+
+  on('command.run', { command: 'redact-secrets' }, async $ => {
+    await update($, isBannerShown, () => true)
+    return { text: `redact-secrets: countries ${countries}, color ${color}` }
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey || !(await read($, isBannerShown))) return next(e)
+
+    const { Box, Button, Text } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="row" gap={1}>
+        <Text color="#1a1b26" backgroundColor={background} bold>
+          {' ⟦•••⟧ '}
+        </Text>
+        <Box flexDirection="column">
+          <Text>
+            <Text bold>redact-secrets</Text>
+            <Text dimColor> · countries: {countries} · color: {color}</Text>
+          </Text>
+          <Text dimColor>Emails, phones, API keys, cards, IBANs and national IDs are masked before they are sent.</Text>
+        </Box>
+        <Button
+          key="dismiss"
+          label="Got it"
+          onPress={async () => {
+            await $.store.set('welcomed', true)
+            await update($, isBannerShown, () => false)
+          }}
+        />
+      </Box>
+    )
+  })
 
   on('prompt.submit', async ($, e, next) => {
     if (e.command) return next(e)
@@ -112,7 +157,10 @@ export const register: Register = (on, options) => {
       $.ui.toast(toastText(locale, count))
     }
     return next({ ...e, text })
-  })
+  }).catch(($, e, next) =>
+    // Fail closed: a prompt that could not be checked is not sent unmasked.
+    next.called ? next(e) : { drop: 'redact-secrets could not check this prompt, so it was not sent' },
+  )
 
   on('ui.render', { component: 'UserMessage' }, ($, e, next) => {
     const text = e.props.text

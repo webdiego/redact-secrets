@@ -1,5 +1,13 @@
 {
   "name": "redact-secrets",
-  "owner": { "name": "webdiego" },
-  "plugins": [{ "name": "redact-secrets", "source": "./" }]
+  "description": "Claude Code mod that masks sensitive data in prompts before they are sent",
+  "owner": {
+    "name": "webdiego"
+  },
+  "plugins": [
+    {
+      "name": "redact-secrets",
+      "source": "./"
+    }
+  ]
 }

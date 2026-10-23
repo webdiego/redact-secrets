@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/banner.svg" alt="redact-secrets: mask sensitive data before it leaves your prompt" width="100%">
+</p>
+
 # redact-secrets
 
 > A Claude Code mod that masks sensitive data in your prompts **before they leave your machine**.
@@ -25,6 +29,7 @@ toast:        🔒 Sensitive data masked before sending: 3
 - [What is detected](#what-is-detected)
 - [The placeholder format](#the-placeholder-format)
 - [Transcript styling](#transcript-styling)
+- [The banner in the CLI](#the-banner-in-the-cli)
 - [Toast and languages](#toast-and-languages)
 - [Project structure](#project-structure)
 - [Tests](#tests)
@@ -142,7 +147,7 @@ Options live in `~/.claude/settings.json` under `pluginConfigs`:
 
 ## How it works
 
-The mod is a single hooks module, [`hooks/register.tsx`](hooks/register.tsx), with two hooks. When it loads, it reads its two options once: `countries` becomes the list of national ID patterns to apply, `color` the chip's background.
+The mod is a single hooks module, [`hooks/register.tsx`](hooks/register.tsx). Two hooks do the work, `prompt.submit` and `ui.render` on `UserMessage`; three more draw [the banner](#the-banner-in-the-cli) (`session.start`, `command.run`, `ui.render` on `AbovePrompt`). When it loads, it reads its two options once: `countries` becomes the list of national ID patterns to apply, `color` the chip's background.
 
 ### 1. `prompt.submit`: masking
 
@@ -153,6 +158,7 @@ Fires after you press Enter and before the prompt enters the session.
 3. The number of new placeholders is counted. Placeholders you typed yourself are subtracted, so they are never counted twice.
 4. If at least one value was masked, a toast is raised in your locale.
 5. The rewritten text is handed on with `next({ ...e, text })`. From here on, the engine, the model, the stored transcript and any other plugin see only the masked version.
+6. **Fail closed.** If the hook ever throws before handing the prompt on, its `.catch` drops the prompt with the message *"redact-secrets could not check this prompt, so it was not sent"*: an unchecked prompt is never sent unmasked.
 
 ### 2. `ui.render` on `UserMessage`: styling
 
@@ -225,6 +231,25 @@ Each placeholder is drawn as:
 
 ---
 
+## The banner in the CLI
+
+The first time Claude Code starts with the mod installed, a band above the prompt introduces it and shows the active settings:
+
+```
+ ⟦•••⟧  redact-secrets · countries: all · color: purple                    [ Got it ]
+        Emails, phones, API keys, cards, IBANs and national IDs are masked before they are sent.
+```
+
+The `⟦•••⟧` mark is drawn in your highlight color. **Got it** dismisses it for good (remembered across sessions). Type `/redact-secrets` at any time to bring it back and print the current settings.
+
+### Logo
+
+<img src="docs/logo.svg" alt="redact-secrets logo" width="120">
+
+The logo is the placeholder itself: the `⟦ ⟧` brackets around the `•••` that replace a secret, in the Tokyo Night purple-to-blue. `docs/logo.svg` is the source; `.claude-plugin/icon.png` (1024×1024) is the plugin's icon.
+
+---
+
 ## Toast and languages
 
 The toast reads `🔒 <label>: <count>`. The neutral `label: count` form avoids plural rules, which differ widely between languages (Polish, Russian, Arabic, …).
@@ -255,14 +280,17 @@ Translations were written by the author, not reviewed by native speakers. Correc
 ```
 redact-secrets/
 ├── .claude-plugin/
-│   ├── plugin.json          # mod manifest: name, version, options (userConfig)
+│   ├── plugin.json          # mod manifest: name, version, options (userConfig), icon
+│   ├── icon.png             # 1024×1024 plugin icon
 │   └── marketplace.json     # makes this repo installable with one line
 ├── hooks/
 │   ├── hooks.json           # points the engine at register.tsx
 │   ├── register.tsx         # the mod: patterns, redact(), countryIds(), toastText(), hooks
 │   ├── register.test.ts     # unit tests for the pure functions
 │   └── hooks.test.tsx       # integration tests through the real hook chain
-├── docs/                    # README illustrations (SVG)
+├── docs/                    # logo, banner and README illustrations (SVG)
+├── types/
+│   └── index.d.ts           # state contract: the banner's isBannerShown flag
 ├── tsconfig.json            # extends the types the engine writes on load
 ├── LICENSE
 └── README.md
@@ -297,6 +325,8 @@ hooks/hooks.test.tsx:
 (pass) a message with nothing masked is left to the engine
 (pass) the countries option limits which national IDs are masked
 (pass) the color option paints the highlight
+(pass) the banner greets on the first session and stays away once dismissed
+(pass) /redact-secrets brings the banner back with the settings
 
 hooks/register.test.ts:
 (pass) masks secrets to their first 3 characters
@@ -304,7 +334,7 @@ hooks/register.test.ts:
 (pass) masks national ID numbers
 (pass) only the chosen countries mask their national IDs
 
- 10 pass
+ 12 pass
  0 fail
 ```
 
@@ -375,6 +405,9 @@ These run the real hooks through the engine's event chain, not just the helper f
 | **the countries option limits which national IDs are masked** | option `countries: 'IT'`; submits a codice fiscale and a PAN | only the codice fiscale reaches the engine masked |
 | **the color option paints the highlight** | option `color: 'green'`; mounts a row with a placeholder | the chip's `backgroundColor` is `#9ece6a` |
 
+| **the banner greets on the first session and stays away once dismissed** | empty store; starts a session; mounts the band | the band shows the settings; pressing **Got it** stores `welcomed: true` and the band gives way to the engine |
+| **/redact-secrets brings the banner back with the settings** | `welcomed` already stored; options `IT`, `green`; runs the command | the command answers `countries IT, color green` and the band is shown again |
+
 Options are passed with `test(name, { options }, body)`, which the kit reads exactly as values stored in settings.
 
 ---
@@ -405,13 +438,16 @@ Options are passed with `test(name, { options }, body)`, which the kit reads exa
 | `countries` option read at load and applied | hooks.test: countries option | ✅ |
 | `color` option read at load and painted | hooks.test: color option | ✅ |
 | `color` option: unknown value falls back to purple | — | ⚠️ not tested |
+| Banner: shown on first session, dismissed for good | hooks.test: banner greets | ✅ |
+| Banner: `/redact-secrets` shows it again with settings | hooks.test: command | ✅ |
+| `prompt.submit` `.catch`: fail closed if the hook throws | — | ⚠️ not tested (no way to make the hook throw from a test) |
 | `prompt.submit`: slash command passed through | — | ⚠️ not tested |
 | `prompt.submit`: `LC_ALL` / `LC_MESSAGES` precedence over `LANG` | — | ⚠️ not tested |
 | `prompt.submit`: placeholders already in the prompt not re-counted | — | ⚠️ not tested |
 | `redact()`: other key prefixes (`ghp_`, `AKIA`, `AIza`, `xox`, JWT, generic 32+) | — | ⚠️ not tested |
 | `ui.render` on `desktop` / `vscode` / `mobile` surfaces | hooks.test: highlighted row | ✅ |
 
-**Summary:** 18 of 23 tracked paths covered (~78%). Every branch of both hooks and both options is exercised at least once, and the transcript drawing on all four surfaces. The gaps are additional inputs to branches that are already covered (other key formats, other locale variables, an invalid color).
+**Summary:** 20 of 26 tracked paths covered (~77%). Every branch of both hooks and both options is exercised at least once, and the transcript drawing on all four surfaces. The gaps are additional inputs to branches that are already covered (other key formats, other locale variables, an invalid color).
 
 ### Countries covered by tests
 

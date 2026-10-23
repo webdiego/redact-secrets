@@ -86,3 +86,49 @@ test('the color option paints the highlight', { options: { color: 'green' } }, a
   expect(chip?.props.backgroundColor).toBe('#9ece6a')
   await ui.unmount()
 })
+
+const BAND = {
+  plugin: 'redact-secrets',
+  component: 'AbovePrompt',
+  requestId: 'band',
+  surface: 'terminal',
+  props: { hasSurvey: false, bodyColumns: 120 },
+} as const
+
+test('the banner greets on the first session and stays away once dismissed', async ($, on) => {
+  const store = new Map<string, unknown>()
+  on('store.get', (_, e) => ({ value: store.get(e.key) }))
+  on('store.set', (_, e) => {
+    store.set(e.key, e.value)
+    return { value: undefined }
+  })
+  on('command.register', () => ({ value: { command: 'redact-secrets' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(BAND)
+  expect((await ui.find({ type: 'Text', text: /countries: all · color: purple/ }))?.text).toContain('redact-secrets')
+
+  await ui.press({ key: 'dismiss' })
+  expect(store.get('welcomed')).toBe(true)
+  expect((await ui.find({ type: 'Text' }))?.text).toBe('engine')
+  await ui.unmount()
+})
+
+test('/redact-secrets brings the banner back with the settings', { options: { countries: 'IT', color: 'green' } }, async ($, on) => {
+  on('store.get', () => ({ value: true }))
+  on('command.register', () => ({ value: { command: 'redact-secrets' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const result = await $.command.run({ command: 'redact-secrets', args: '' })
+  expect(result.text).toBe('redact-secrets: countries IT, color green')
+
+  const ui = await $.ui.mount(BAND)
+  expect((await ui.find({ type: 'Text', text: /countries: IT · color: green/ }))?.text).toContain('redact-secrets')
+  await ui.unmount()
+})
