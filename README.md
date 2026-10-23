@@ -363,6 +363,30 @@ hooks/register.test.ts:
 | `DE89 3704 0044 0532 0130 00` | `⟦iban:DE8•••⟧` | German IBAN |
 | `ho 3 gatti e 2024 anni` | *(unchanged)* | short numbers are **not** masked |
 
+**`masks passwords, credentials in URLs and private keys`** checks the `secret` kind and the newer key formats:
+
+| Input | Expected | Checks |
+|-------|----------|--------|
+| `PASSWORD=hunter2isgood` | `PASSWORD=⟦secret:hun•••⟧` | `.env` assignment |
+| `{"api_key": "abc123xyz"}` | `{"api_key": "⟦secret:abc•••⟧"}` | JSON, quotes kept |
+| `GITHUB_TOKEN: x9y8z7w6` | `GITHUB_TOKEN: ⟦secret:x9y•••⟧` | YAML style |
+| `postgres://admin:S3cretPass@localhost:5432/app` | `postgres://admin:⟦secret:S3c•••⟧@localhost:5432/app` | password in a URL, user and host kept |
+| `stripe sk_live_51HxAbCdEfGhIjKlMn` | `stripe ⟦key:sk_•••⟧` | Stripe key |
+| `Authorization: Bearer abc.def-ghi_jkl0123456` | `Authorization: Bearer ⟦key:abc•••⟧` | Bearer token |
+| `-----BEGIN OPENSSH PRIVATE KEY-----` … `-----END …-----` | `⟦key:---•••⟧` | whole multi-line block |
+| `const apiKey = process.env.API_KEY` | *(unchanged)* | env lookups are code |
+| `password: ${DB_PASSWORD}` | *(unchanged)* | template variables are code |
+| `max_tokens=4096` | *(unchanged)* | the name must end with the keyword |
+
+**`dates, times and IP addresses are not phone numbers`**:
+
+| Input | Expected | Checks |
+|-------|----------|--------|
+| `at 2026-10-23 12:30:45` | *(unchanged)* | ISO date and time |
+| `on 23/10/2026` | *(unchanged)* | European date |
+| `host 192.168.100.200` | *(unchanged)* | IPv4 |
+| `2026-10-23 333 123 4567` | `⟦card:202•••⟧` | a number after a date is still masked |
+
 **`the toast speaks the locale, English otherwise`** checks `toastText()`:
 
 | Locale | Expected |
@@ -432,6 +456,9 @@ Options are passed with `test(name, { options }, body)`, which the kit reads exa
 | `redact()`: `card` pattern | register.test: card | ✅ |
 | `redact()`: `phone` pattern (`+`, `()`, spaces, `/`, native digits) | register.test: 5 cases | ✅ |
 | `redact()`: 8-digit floor keeps short numbers | register.test: `2024` | ✅ |
+| `redact()`: `secret` in assignments and URLs, env lookups left alone | register.test: passwords | ✅ |
+| `redact()`: private key blocks, Bearer, Stripe keys | register.test: passwords | ✅ |
+| `redact()`: dates and IPv4 not taken as phones | register.test: dates | ✅ |
 | `toastText()`: known locale (POSIX + BCP 47 style) | register.test: it, ja, pt-BR | ✅ |
 | `toastText()`: unknown / missing locale → English | register.test: xx_XX, undefined | ✅ |
 | `prompt.submit`: masks, counts, toasts, hands on | hooks.test: masked prompt | ✅ |
@@ -453,7 +480,7 @@ Options are passed with `test(name, { options }, body)`, which the kit reads exa
 | `redact()`: other key prefixes (`ghp_`, `AKIA`, `AIza`, `xox`, JWT, generic 32+) | — | ⚠️ not tested |
 | `ui.render` on `desktop` / `vscode` / `mobile` surfaces | hooks.test: highlighted row | ✅ |
 
-**Summary:** 20 of 26 tracked paths covered (~77%). Every branch of both hooks and both options is exercised at least once, and the transcript drawing on all four surfaces. The gaps are additional inputs to branches that are already covered (other key formats, other locale variables, an invalid color).
+**Summary:** 23 of 29 tracked paths covered (~79%). Every branch of both hooks and both options is exercised at least once, and the transcript drawing on all four surfaces. The gaps are additional inputs to branches that are already covered (other key formats, other locale variables, an invalid color).
 
 ### Countries covered by tests
 
