@@ -1,14 +1,45 @@
 # redact-secrets
 
-A Claude Code mod that masks sensitive data in your prompts **before they are sent** to the model.
+> A Claude Code mod that masks sensitive data in your prompts **before they leave your machine**.
 
-Emails, phone numbers, API keys, credit card numbers and IBANs are replaced with a placeholder that keeps only their first 3 characters, e.g. `⟦email:mar•••⟧`. In the transcript the masked value is shown highlighted, and a toast tells you how many items were masked, in your system language (35 languages, English fallback).
+Emails, phone numbers, API keys, credit card numbers and IBANs typed (or pasted) into the Claude Code prompt are replaced with a short placeholder that keeps only their first 3 characters. The model never receives the full value. In your transcript the masked value is highlighted, and a toast tells you how many items were masked, in your system language.
 
 ```
-you type:   write to mario.rossi@gmail.com, tel +39 333 123 4567
-model sees: write to ⟦email:mar•••⟧, tel ⟦phone:+39•••⟧
-toast:      🔒 Sensitive data masked before sending: 2
+you type:     write to mario.rossi@gmail.com, tel +39 333 123 4567
+model reads:  write to ⟦email:mar•••⟧, tel ⟦phone:+39•••⟧
+you see:      write to  🔒 mar•••  , tel  🔒 +39•••     (highlighted in purple)
+toast:        🔒 Sensitive data masked before sending: 2
 ```
+
+---
+
+## Table of contents
+
+- [Why](#why)
+- [Install](#install)
+- [How it works](#how-it-works)
+- [What is detected](#what-is-detected)
+- [The placeholder format](#the-placeholder-format)
+- [Transcript styling](#transcript-styling)
+- [Toast and languages](#toast-and-languages)
+- [Project structure](#project-structure)
+- [Tests](#tests)
+- [Coverage](#coverage)
+- [Development](#development)
+- [Customizing](#customizing)
+- [Limits and known trade-offs](#limits-and-known-trade-offs)
+- [FAQ](#faq)
+- [License](#license)
+
+---
+
+## Why
+
+It is easy to paste a log, a `.env` line, a customer email or a stack trace containing a phone number into a prompt without noticing. Once sent, that data is part of the conversation. This mod works as a last safety net: it runs locally, inside Claude Code, on the exact text that is about to be submitted, and rewrites it before it enters the session.
+
+It needs no network, no external service and no configuration.
+
+---
 
 ## Install
 
@@ -18,7 +49,11 @@ At the prompt of a Claude Code terminal session:
 /plugin install redact-secrets --marketplace webdiego/redact-secrets
 ```
 
-Answer `y` to add the marketplace, then pick a scope (user scope applies it to every session).
+What you will see:
+
+1. `Add marketplace?` naming `github:webdiego/redact-secrets`: answer `y`.
+2. The plugin's details and a choice of scope: pick **user** (applies to every session) with Enter.
+3. `Installed redact-secrets. Plugin is now active.` The mod runs immediately, no restart needed.
 
 From a shell:
 
@@ -26,24 +61,323 @@ From a shell:
 claude plugin install redact-secrets --marketplace webdiego/redact-secrets
 ```
 
-In the desktop app: click + next to the prompt box, then Plugins, Add marketplace with `webdiego/redact-secrets`, then Add plugin.
+In the desktop app, where `/plugin` does not run: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `webdiego/redact-secrets`, then **Add plugin**.
+
+> **Private repository:** the install works only for people who can read the repository on GitHub and whose machine already holds a git credential for github.com (an SSH key, or `gh auth login` followed by `gh auth setup-git`). The install never prompts for one.
+
+To remove it, from a shell:
+
+```
+claude plugin uninstall redact-secrets
+```
+
+---
+
+## How it works
+
+The mod is a single hooks module, [`hooks/register.tsx`](hooks/register.tsx), with two hooks.
+
+### 1. `prompt.submit`: masking
+
+Fires after you press Enter and before the prompt enters the session.
+
+1. Slash commands (`/compact`, `/review ...`) are passed through untouched.
+2. The text goes through `redact()`, which applies each detection pattern in a fixed order (see below).
+3. The number of new placeholders is counted. Placeholders you typed yourself are subtracted, so they are never counted twice.
+4. If at least one value was masked, a toast is raised in your locale.
+5. The rewritten text is handed on with `next({ ...e, text })`. From here on, the engine, the model, the stored transcript and any other plugin see only the masked version.
+
+### 2. `ui.render` on `UserMessage`: styling
+
+Fires when the transcript draws one of your messages.
+
+- If the message contains no `⟦…⟧` placeholder, the hook calls `next(e)` and the engine draws the row as usual.
+- Otherwise it draws the row itself: a dim `> ` prefix, the plain text, and every placeholder replaced by a highlighted ` 🔒 abc••• ` chip.
+
+```
+          you press Enter
+                 │
+                 ▼
+   ┌───────────────────────────┐
+   │ prompt.submit (this mod)  │  redact() → count → toast
+   └─────────────┬─────────────┘
+                 │ masked text only
+                 ▼
+   ┌───────────────────────────┐
+   │ Claude Code engine        │  stores message, sends to model
+   └─────────────┬─────────────┘
+                 │
+                 ▼
+   ┌───────────────────────────┐
+   │ ui.render UserMessage     │  draws ⟦…⟧ as purple chips
+   └───────────────────────────┘
+```
+
+---
 
 ## What is detected
 
-- **Email**: including international addresses (`josé@müller.de`)
-- **Phone**: 8+ digits, with `+`/`00` prefixes, spaces, `()`, `.`, `-`, `/`; Latin, Arabic and Indic digits
-- **API keys**: OpenAI/Anthropic (`sk-`), GitHub (`ghp_`, `github_pat_`), AWS (`AKIA`), Google (`AIza`), Slack (`xox*-`), JWTs, and any 32+ character token mixing letters and digits
-- **Credit cards**: 13–19 digits
-- **IBAN**: any country
+Patterns run in this order. The order matters: API keys and IBANs are matched first, so their digits are not later taken as a phone or card number.
 
-Slash commands are left untouched.
+| # | Kind | What matches | Examples |
+|---|------|--------------|----------|
+| 1 | `key` | OpenAI / Anthropic `sk-…`, `sk-ant-…`; GitHub `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_…`; AWS `AKIA…`; Google `AIza…`; Slack `xoxb-`, `xoxp-`, …; JWTs `eyJ….….…`; any 32+ character token that mixes letters and digits | `sk-ant-api03-…` → `⟦key:sk-•••⟧` |
+| 2 | `email` | Any `local@domain.tld`, Unicode letters included | `josé@müller.de` → `⟦email:jos•••⟧` |
+| 3 | `iban` | 2 letters + 2 digits + 3–7 groups of 4, spaces optional (all countries) | `DE89 3704 0044 0532 0130 00` → `⟦iban:DE8•••⟧` |
+| 4 | `card` | 13–19 digits, spaces or dashes allowed | `4111 1111 1111 1111` → `⟦card:411•••⟧` |
+| 5 | `phone` | Optional `+` or `00` prefix, optional `(`, then digits with spaces, `()`, `.`, `/`, `-`, **at least 8 digits in total** | `+39 333 123 4567`, `(555) 123-4567`, `020 7946 0958`, `+49 30/1234567` |
 
-## Limits
+**International digits.** Phone and card patterns use Unicode decimal digits (`\p{Nd}`), so Arabic-Indic (`٠١٢٣`), Persian (`۰۱۲۳`), Devanagari (`०१२३`) and other native numerals are detected like Latin ones.
 
-- Detection is regex based: false positives and misses are possible. Numbers with fewer than 8 digits are never masked.
-- The first 3 characters of each value do reach the model.
-- National ID numbers (tax codes, SSNs, ...) are not covered.
+**The 8-digit floor.** For every kind except `email` and `key`, a match with fewer than 8 digits is left alone. This keeps years (`2024`), prices, versions, ports and short counts out of the mask.
+
+---
+
+## The placeholder format
+
+```
+⟦<kind>:<first 3 characters>•••⟧
+```
+
+- `⟦` and `⟧` (U+27E6 / U+27E7) are rare enough to never collide with normal prose or code.
+- `<kind>` tells the model what was there (`email`, `phone`, `key`, `card`, `iban`), so it can still reason about the prompt ("send the invoice to ⟦email:mar•••⟧").
+- The 3 visible characters let **you** recognise which value was masked when several are in the same prompt.
+
+---
+
+## Transcript styling
+
+Each placeholder is drawn as:
+
+```tsx
+<Text color="#1a1b26" backgroundColor="#bb9af7" bold>{` 🔒 ${prefix}••• `}</Text>
+```
+
+Dark text on the Tokyo Night purple. Terminals without true-color support fall back to the nearest available color.
+
+---
+
+## Toast and languages
+
+The toast reads `🔒 <label>: <count>`. The neutral `label: count` form avoids plural rules, which differ widely between languages (Polish, Russian, Arabic, …).
+
+The language comes from the environment, in POSIX order: `LC_ALL`, then `LC_MESSAGES`, then `LANG`. Only the language part is used (`it_IT.UTF-8` → `it`, `pt-BR` → `pt`). Unknown or unset falls back to English.
+
+| Code | Language | Code | Language | Code | Language |
+|------|----------|------|----------|------|----------|
+| `en` | English | `cs` | Czech | `bn` | Bengali |
+| `it` | Italian | `ro` | Romanian | `ur` | Urdu |
+| `es` | Spanish | `hu` | Hungarian | `zh` | Chinese |
+| `pt` | Portuguese | `el` | Greek | `ja` | Japanese |
+| `fr` | French | `ru` | Russian | `ko` | Korean |
+| `de` | German | `uk` | Ukrainian | `id` | Indonesian |
+| `nl` | Dutch | `tr` | Turkish | `ms` | Malay |
+| `sv` | Swedish | `ar` | Arabic | `vi` | Vietnamese |
+| `da` | Danish | `he` | Hebrew | `th` | Thai |
+| `no` / `nb` | Norwegian | `fa` | Persian | `tl` | Filipino |
+| `fi` | Finnish | `hi` | Hindi | `sw` | Swahili |
+| `pl` | Polish | | | | |
+
+Translations were written by the author, not reviewed by native speakers. Corrections are welcome.
+
+---
+
+## Project structure
+
+```
+redact-secrets/
+├── .claude-plugin/
+│   ├── plugin.json          # mod manifest: name, version, description
+│   └── marketplace.json     # makes this repo installable with one line
+├── hooks/
+│   ├── hooks.json           # points the engine at register.tsx
+│   ├── register.tsx         # the mod: patterns, redact(), toastText(), hooks
+│   ├── register.test.ts     # unit tests for the pure functions
+│   └── hooks.test.tsx       # integration tests through the real hook chain
+├── tsconfig.json            # extends the types the engine writes on load
+├── LICENSE
+└── README.md
+```
+
+`register.tsx` exports two pure functions so they can be tested on their own:
+
+- `redact(text: string): string`
+- `toastText(locale: string | undefined, count: number): string`
+
+---
+
+## Tests
+
+Run them with:
+
+```
+claude plugin test .
+```
+
+The runner executes every `*.test.ts` / `*.test.tsx` in an environment like the one the mod's hooks run in. Tests import their kit from `claude-code/testing`. Nothing sits beneath the mod in a test: small hooks registered with `on(...)` stand in for the engine (answering `env.get`, capturing `ui.toast`, echoing `prompt.submit`).
+
+Current result:
+
+```
+hooks/hooks.test.tsx:
+(pass) a prompt reaches the engine masked, with a counted toast in the locale
+(pass) a prompt with nothing sensitive passes unchanged and raises no toast
+(pass) a masked value is drawn highlighted in the transcript
+(pass) a message with nothing masked is left to the engine
+
+hooks/register.test.ts:
+(pass) masks secrets to their first 3 characters
+(pass) the toast speaks the locale, English otherwise
+
+ 6 pass
+ 0 fail
+```
+
+### `hooks/register.test.ts`: unit tests
+
+**`masks secrets to their first 3 characters`** checks `redact()` input by input:
+
+| Input | Expected | Checks |
+|-------|----------|--------|
+| `mail mario.rossi@gmail.com ok` | `mail ⟦email:mar•••⟧ ok` | plain email, surrounding text kept |
+| `mail josé@müller.de` | `mail ⟦email:jos•••⟧` | Unicode email |
+| `tel +39 333 123 4567` | `tel ⟦phone:+39•••⟧` | Italian mobile, `+` prefix |
+| `call (555) 123-4567` | `call ⟦phone:(55•••⟧` | US format with parentheses |
+| `ring 020 7946 0958` | `ring ⟦phone:020•••⟧` | UK landline |
+| `+49 30/1234567` | `⟦phone:+49•••⟧` | German format with `/` |
+| `هاتف ٠١٢٣٤٥٦٧٨٩` | `هاتف ⟦phone:٠١٢•••⟧` | Arabic-Indic digits |
+| `key sk-ant-api03-abc…xyz` | `key ⟦key:sk-•••⟧` | Anthropic API key |
+| `carta 4111 1111 1111 1111` | `carta ⟦card:411•••⟧` | card number with spaces |
+| `IT60 X054 2811 1010 0000 0123 456` | `⟦iban:IT6•••⟧` | Italian IBAN |
+| `DE89 3704 0044 0532 0130 00` | `⟦iban:DE8•••⟧` | German IBAN |
+| `ho 3 gatti e 2024 anni` | *(unchanged)* | short numbers are **not** masked |
+
+**`the toast speaks the locale, English otherwise`** checks `toastText()`:
+
+| Locale | Expected |
+|--------|----------|
+| `it_IT.UTF-8` | `🔒 Dati sensibili oscurati prima dell'invio: 2` |
+| `ja_JP.UTF-8` | `🔒 送信前に機密データをマスクしました: 1` |
+| `pt-BR` | `🔒 Dados sensíveis ocultados antes do envio: 3` |
+| `xx_XX` | English fallback |
+| `undefined` | English fallback |
+
+### `hooks/hooks.test.tsx`: integration tests
+
+These run the real hooks through the engine's event chain, not just the helper functions.
+
+| Test | Setup | Asserts |
+|------|-------|---------|
+| **a prompt reaches the engine masked, with a counted toast in the locale** | `LANG=it_IT.UTF-8`; submits a prompt with an email and a phone | the text that reaches the engine is masked; exactly one toast, in Italian, with count `2` |
+| **a prompt with nothing sensitive passes unchanged and raises no toast** | no locale; submits `refactor the login page` | text unchanged; no toast at all |
+| **a masked value is drawn highlighted in the transcript** | mounts a `UserMessage` row on the terminal surface with a placeholder | the row draws `> mail  🔒 mar•••  ok` |
+| **a message with nothing masked is left to the engine** | mounts a `UserMessage` row with plain text | the mod calls `next(e)` and the engine's own drawing is shown |
+
+---
+
+## Coverage
+
+`claude plugin test` has no automatic coverage report, so coverage is tracked by hand against the code paths in `register.tsx`.
+
+### Code paths
+
+| Path in `register.tsx` | Covered by | Status |
+|---|---|---|
+| `redact()`: `key` pattern (Anthropic `sk-ant-`) | register.test: key | ✅ |
+| `redact()`: `email` pattern (ASCII + Unicode) | register.test: email ×2 | ✅ |
+| `redact()`: `iban` pattern | register.test: IT, DE | ✅ |
+| `redact()`: `card` pattern | register.test: card | ✅ |
+| `redact()`: `phone` pattern (`+`, `()`, spaces, `/`, native digits) | register.test: 5 cases | ✅ |
+| `redact()`: 8-digit floor keeps short numbers | register.test: `2024` | ✅ |
+| `toastText()`: known locale (POSIX + BCP 47 style) | register.test: it, ja, pt-BR | ✅ |
+| `toastText()`: unknown / missing locale → English | register.test: xx_XX, undefined | ✅ |
+| `prompt.submit`: masks, counts, toasts, hands on | hooks.test: masked prompt | ✅ |
+| `prompt.submit`: nothing found → no toast, text unchanged | hooks.test: clean prompt | ✅ |
+| `prompt.submit`: `LANG` read through `$.env.get` | hooks.test: masked prompt | ✅ |
+| `ui.render`: placeholder drawn as chip | hooks.test: highlighted row | ✅ |
+| `ui.render`: no placeholder → `next(e)` | hooks.test: engine row | ✅ |
+| `prompt.submit`: slash command passed through | — | ⚠️ not tested |
+| `prompt.submit`: `LC_ALL` / `LC_MESSAGES` precedence over `LANG` | — | ⚠️ not tested |
+| `prompt.submit`: placeholders already in the prompt not re-counted | — | ⚠️ not tested |
+| `redact()`: other key prefixes (`ghp_`, `AKIA`, `AIza`, `xox`, JWT, generic 32+) | — | ⚠️ not tested |
+| `ui.render` on `desktop` / `vscode` / `mobile` surfaces | — | ⚠️ not tested |
+
+**Summary:** 13 of 18 tracked paths covered (~72%). Every branch of both hooks is exercised at least once. The gaps are additional inputs to branches that are already covered (other key formats, other locale variables) and the non-terminal surfaces.
+
+### Countries covered by tests
+
+| Kind | Tested formats |
+|------|----------------|
+| Phone | 🇮🇹 Italy, 🇺🇸 USA, 🇬🇧 UK, 🇩🇪 Germany, Arabic-Indic digits |
+| IBAN | 🇮🇹 Italy, 🇩🇪 Germany |
+| Email | ASCII, Unicode (accented local part and domain) |
+
+Contributions adding test cases for more countries are welcome: add a line to `register.test.ts`.
+
+---
+
+## Development
+
+Run Claude Code with the mod loaded straight from this folder:
+
+```
+claude --plugin-dir /path/to/redact-secrets
+```
+
+Validate the manifest and the module the way the engine will read them:
+
+```
+claude plugin validate .
+```
+
+Type-check (the engine writes the types into `.claude-plugin/types/` the first time it loads the mod):
+
+```
+npx tsc -p .
+```
+
+---
+
+## Customizing
+
+Everything lives in `hooks/register.tsx`.
+
+- **Add a pattern:** append `['kind', /regex/gu]` to `PATTERNS`. Put more specific patterns before more generic ones.
+- **Show more or fewer characters:** change `m.slice(0, 3)` in `redact()`.
+- **Change the highlight color:** edit `color` and `backgroundColor` on the chip's `<Text>`.
+- **Add or fix a translation:** add a key to `LABELS` (the lowercase ISO 639-1 code).
+- **Change the digit floor:** change the `< 8` in `redact()`.
+
+---
+
+## Limits and known trade-offs
+
+- **Regex based.** False positives (a long ID taken for a key, a long order number taken for a phone) and misses are possible. It is a safety net, not a guarantee.
+- **The first 3 characters reach the model.** That is by design, so you can tell values apart. For an email that is the start of a name; for a key it is usually the public prefix (`sk-`, `ghp`).
+- **Short local numbers pass.** Phone numbers with fewer than 8 digits are not masked.
+- **National ID numbers are not covered** (Italian codice fiscale, US SSN, etc.): their formats vary by country.
+- **Only your prompt is masked.** Files Claude reads with tools, command output and the model's replies are not touched.
+- **Slash command arguments are not masked.**
+- **The original value is not kept anywhere.** It cannot be restored later in the conversation.
+
+---
+
+## FAQ
+
+**Does it send anything anywhere?**
+No. It runs entirely inside your local Claude Code process and makes no network calls.
+
+**Can Claude still help me if the data is masked?**
+Yes, for most tasks. The placeholder says what kind of value was there, so Claude can still write "send it to ⟦email:mar•••⟧" or explain how to use an API key. If Claude really needs the value, put it in a file or an environment variable instead of the prompt.
+
+**I typed `⟦…⟧` myself. Will it be counted?**
+No. Placeholders already present in your text are subtracted from the count.
+
+**Why is my toast in English?**
+Your `LC_ALL` / `LC_MESSAGES` / `LANG` is unset or names a language not in the table. Check with `echo $LANG`.
+
+---
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 webdiego
