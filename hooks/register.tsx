@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
 // National ID numbers, switched on per country by the `countries` option.
 export const NATIONAL_IDS: Record<string, RegExp> = {
@@ -23,17 +23,20 @@ const SECRETS: [string, RegExp][] = [
   ['secret', /(?<=:\/\/[^\s:@\/]*:)[^\s@\/]+(?=@)/g],
   // The value of PASSWORD=…, "api_key": "…", client_secret: …; not env lookups like process.env.X or ${X}.
   // (?<!⟦): the `secret:` label of a placeholder is not an assignment.
-  ['secret', /(?<=(?<!⟦)(?:passw(?:or)?d|pwd|secret(?:[_-]?key)?|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*["']?)(?![$%{(<]|[A-Za-z_]\w*[.([])[^\s"'`,;]{4,}/gi],
+  ['secret', /(?<=(?<!⟦)(?:passw(?:or)?d|pwd|secret(?:[_-]?key)?|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*["']?)(?![$%{(<⟦]|[A-Za-z_]\w*[.([])[^\s"'`,;]{4,}/gi],
 ]
 
 // Dates, times and IPv4 addresses look like phone numbers but are not secret.
 const NOT_A_PHONE = /^(?:\d{4}-\d{2}-\d{2}|\d{1,2}([./-])\d{1,2}\1\d{4})(?: \d{1,2})?$|^\d{1,3}(?:\.\d{1,3}){3}$/
 
+// Git commit hashes, SHA-256 digests and UUIDs fill tool output and are not secret.
+const NOT_A_KEY = /^(?:[\da-f]{40}|[\da-f]{64}|[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})$/i
+
 // Order matters: IBANs before phones, so their digits are not taken as a number.
 const PATTERNS: [string, RegExp][] = [
   // \p{L}/\p{Nd}: international addresses (josé@müller.de) and non-Latin digits (Arabic, Persian, Devanagari).
   ['email', /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.\p{L}{2,}/gu],
-  ['iban', /\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,3})?\b/g],
+  ['bank_account', /\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,3})?\b/g],
   ['card', /(?<!\p{Nd})(?:\p{Nd}[ -]?){13,19}(?!\p{Nd})/gu],
   ['phone', /(?:\+|(?<!\p{Nd})00)?\(?\p{Nd}[\p{Nd} ().\/-]{6,}\p{Nd}(?!\p{Nd})/gu],
 ]
@@ -52,13 +55,36 @@ export const redact = (text: string, ids: RegExp[] = Object.values(NATIONAL_IDS)
     (t, [kind, re]) =>
       t.replace(re, m =>
         // Fewer than 8 digits is a year, a price, a count: left alone.
-        ((kind === 'card' || kind === 'phone' || kind === 'iban') && (m.match(/\p{Nd}/gu) ?? []).length < 8) ||
-        (kind === 'phone' && NOT_A_PHONE.test(m))
+        ((kind === 'card' || kind === 'phone' || kind === 'bank_account') && (m.match(/\p{Nd}/gu) ?? []).length < 8) ||
+        (kind === 'phone' && NOT_A_PHONE.test(m)) ||
+        (kind === 'key' && NOT_A_KEY.test(m))
           ? m
           : `⟦${kind}:${m.slice(0, 3)}•••⟧`,
       ),
     text,
   )
+
+// Every string in a tool's result, but encoded images and PDFs (`base64`, MCP's `data`).
+export const redactDeep = (value: unknown, ids?: RegExp[]): unknown =>
+  typeof value === 'string'
+    ? redact(value, ids)
+    : Array.isArray(value)
+      ? value.map(v => redactDeep(v, ids))
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.entries(value).map(([k, v]) => [k, k === 'base64' || k === 'data' ? v : redactDeep(v, ids)]),
+          )
+        : value
+
+const placeholders = (text: string) => (text.match(MASK) ?? []).length
+
+// The placeholders `after` holds beyond those already in `before`, by kind, in order of appearance.
+export const maskedKinds = (before: string, after: string) => {
+  const counts: Record<string, number> = {}
+  for (const [, kind = ''] of after.matchAll(MASK)) counts[kind] = (counts[kind] ?? 0) + 1
+  for (const [, kind = ''] of before.matchAll(MASK)) counts[kind] = (counts[kind] ?? 0) - 1
+  return Object.fromEntries(Object.entries(counts).filter(([, n]) => n > 0))
+}
 
 // Tokyo Night palette; the `color` option picks one.
 export const COLORS: Record<string, string> = {
@@ -111,9 +137,30 @@ const LABELS: Record<string, string> = {
   sw: 'Data nyeti imefichwa kabla ya kutuma',
 }
 
+// One icon per kind, so the breakdown needs no translation.
+const ICONS: Record<string, string> = {
+  email: '📧',
+  phone: '📞',
+  key: '🔑',
+  secret: '🔐',
+  card: '💳',
+  bank_account: '🏦',
+  id: '🪪',
+}
+
 // "it_IT.UTF-8" / "pt-BR" -> "it" / "pt"; English when unknown.
-export const toastText = (locale: string | undefined, count: number) =>
-  `🔒 ${LABELS[(locale ?? '').toLowerCase().split(/[_.@-]/)[0]] ?? LABELS.en}: ${count}`
+export const toastText = (locale: string | undefined, kinds: Record<string, number>) =>
+  `🔒 ${LABELS[(locale ?? '').toLowerCase().split(/[_.@-]/)[0] ?? ''] ?? LABELS.en}: ${Object.entries(kinds)
+    .map(([kind, n]) => `${ICONS[kind] ?? kind} ${n}`)
+    .join(' · ')}`
+
+// A toast naming what `after` masked beyond `before`; none when nothing was.
+const toast = async ($: EngineInterface, before: string, after: string) => {
+  const kinds = maskedKinds(before, after)
+  if (Object.keys(kinds).length === 0) return
+  const locale = (await $.env.get('LC_ALL')) || (await $.env.get('LC_MESSAGES')) || (await $.env.get('LANG'))
+  $.ui.toast(toastText(locale, kinds))
+}
 
 const isBannerShown = atom({ plugin: 'redact-secrets', key: 'isBannerShown' } as const, false)
 
@@ -166,23 +213,55 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     if (e.command) return next(e)
     const text = redact(e.text, ids)
-    const count = (text.match(MASK) ?? []).length - (e.text.match(MASK) ?? []).length
-    if (count > 0) {
-      const locale = (await $.env.get('LC_ALL')) || (await $.env.get('LC_MESSAGES')) || (await $.env.get('LANG'))
-      $.ui.toast(toastText(locale, count))
-    }
+    await toast($, e.text, text)
     return next({ ...e, text })
   }).catch(($, e, next) =>
     // Fail closed: a prompt that could not be checked is not sent unmasked.
     next.called ? next(e) : { drop: 'redact-secrets could not check this prompt, so it was not sent' },
   )
 
+  // What a tool read or printed (a file, a command's output, a web page) reaches the model masked too.
+  on('tool.call', async ($, e, next) => {
+    const ran = await next(e)
+    if (ran.deny !== undefined || ran.isError) return ran
+    const before = JSON.stringify(ran.result) ?? ''
+    const result = redactDeep(ran.result, ids)
+    const after = JSON.stringify(result) ?? ''
+    if (after === before) return ran
+    await toast($, before, after)
+    return { result, context: ran.context }
+  }).catch(() =>
+    // Fail closed: the tool has run, but output that could not be checked is withheld.
+    ({ deny: 'redact-secrets could not check this output, so it was withheld' }),
+  )
+
+  // A placeholder is not the value it hides: writing one into a file would replace a real secret.
+  const guard = (path: string, before: string, after: string) =>
+    placeholders(after) > placeholders(before)
+      ? {
+          deny:
+            `redact-secrets: this would write a masked placeholder (⟦…•••⟧) into ${path}, ` +
+            'destroying the real value it stands for. Leave those lines untouched, or ask the user to edit them.',
+        }
+      : undefined
+
+  on('tool.call', { tool: 'Edit' }, ($, e, next) => guard(e.file_path, e.old_string, e.new_string) ?? next(e)).catch(
+    ($, e, next) => (next.called ? next(e) : { deny: 'redact-secrets could not check this edit' }),
+  )
+
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    // A file that exists but cannot be read (permissions, over 4 MiB) cannot be checked: refused.
+    const current = (await $.fs.exists(e.file_path)) ? await $.fs.read(e.file_path).catch(() => undefined) : ''
+    if (current === undefined) return { deny: 'redact-secrets could not check this write' }
+    return guard(e.file_path, current, e.content) ?? next(e)
+  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'redact-secrets could not check this write' }))
+
   on('ui.render', { component: 'UserMessage' }, ($, e, next) => {
     const text = e.props.text
     if (!text.includes('⟦')) return next(e)
 
     const { Box, Text } = $.ui.resolve(e)
-    const parts: unknown[] = []
+    const parts: RenderChildren[] = []
     let last = 0
     for (const m of text.matchAll(MASK)) {
       parts.push(text.slice(last, m.index))

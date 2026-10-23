@@ -23,6 +23,6 @@
   <rect x="24" y="200" width="852" height="42" rx="6" fill="none" stroke="#3b4261"/>
   <text x="40" y="226" fill="#565f89">&gt;</text>
 
-  <rect x="520" y="256" width="356" height="30" rx="6" fill="#24283b" stroke="#bb9af7"/>
-  <text x="536" y="276" fill="#c0caf5" font-size="14">🔒 Sensitive data masked before sending: 3</text>
+  <rect x="346" y="256" width="530" height="30" rx="6" fill="#24283b" stroke="#bb9af7"/>
+  <text x="362" y="276" fill="#c0caf5" font-size="14">🔒 Sensitive data masked before sending: 📧 1 · 📞 1 · 🪪 1</text>
 </svg>

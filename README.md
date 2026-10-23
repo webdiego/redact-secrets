@@ -6,14 +6,14 @@
 
 > A Claude Code mod that masks sensitive data in your prompts **before they leave your machine**.
 
-Emails, phone numbers, API keys, passwords, credit card numbers, IBANs and national ID numbers typed (or pasted) into the Claude Code prompt are replaced with a short placeholder that keeps only their first 3 characters. The model never receives the full value. In your transcript the masked value is highlighted, and a toast tells you how many items were masked, in your system language.
+Emails, phone numbers, API keys, passwords, credit card numbers, IBANs and national ID numbers typed (or pasted) into the Claude Code prompt, or found in what Claude's tools read and print (files, command output, web pages), are replaced with a short placeholder that keeps only their first 3 characters. The model never receives the full value. In your transcript the masked value is highlighted, and a toast tells you what was masked, in your system language.
 
 ![Masked values highlighted in the Claude Code transcript, with the toast counting them](docs/transcript.svg)
 
 ```
 you type:     write to mario.rossi@gmail.com, tel +39 333 123 4567, my tax code is RSSMRA85T10A562S
 model reads:  write to ⟦email:mar•••⟧, tel ⟦phone:+39•••⟧, my tax code is ⟦id:RSS•••⟧
-toast:        🔒 Sensitive data masked before sending: 3
+toast:        🔒 Sensitive data masked before sending: 📧 1 · 📞 1 · 🪪 1
 ```
 
 > The images in this README are illustrations of the mod's output, drawn with the exact colors and text it uses; they are not screen captures.
@@ -145,7 +145,7 @@ Options live in `~/.claude/settings.json` under `pluginConfigs`:
 
 ## How it works
 
-The mod is a single hooks module, [`hooks/register.tsx`](hooks/register.tsx). Two hooks do the work, `prompt.submit` and `ui.render` on `UserMessage`; three more draw [the banner](#the-banner-in-the-cli) (`session.start`, `command.run`, `ui.render` on `AbovePrompt`). When it loads, it reads its two options once: `countries` becomes the list of national ID patterns to apply, `color` the chip's background.
+The mod is a single hooks module, [`hooks/register.tsx`](hooks/register.tsx). Four hooks do the work: `prompt.submit`, `tool.call` (output masking, and a guard on `Edit` and `Write`) and `ui.render` on `UserMessage`; three more draw [the banner](#the-banner-in-the-cli) (`session.start`, `command.run`, `ui.render` on `AbovePrompt`). When it loads, it reads its two options once: `countries` becomes the list of national ID patterns to apply, `color` the chip's background.
 
 ### 1. `prompt.submit`: masking
 
@@ -153,12 +153,25 @@ Fires after you press Enter and before the prompt enters the session.
 
 1. Slash commands (`/compact`, `/review ...`) are passed through untouched.
 2. The text goes through `redact()`, which applies the chosen national ID patterns first, then each universal pattern in a fixed order (see below).
-3. The number of new placeholders is counted. Placeholders you typed yourself are subtracted, so they are never counted twice.
+3. The new placeholders are counted by kind. Placeholders you typed yourself are subtracted, so they are never counted twice.
 4. If at least one value was masked, a toast is raised in your locale.
 5. The rewritten text is handed on with `next({ ...e, text })`. From here on, the engine, the model, the stored transcript and any other plugin see only the masked version.
 6. **Fail closed.** If the hook ever throws before handing the prompt on, its `.catch` drops the prompt with the message *"redact-secrets could not check this prompt, so it was not sent"*: an unchecked prompt is never sent unmasked.
 
-### 2. `ui.render` on `UserMessage`: styling
+### 2. `tool.call`: masking what tools return
+
+Fires around every tool call (Read, Bash, Grep, WebFetch, MCP tools, …), after the tool has run and before the model reads its result.
+
+1. Errors and refused calls are passed through untouched.
+2. Every string in the result goes through `redactDeep()`, which runs `redact()` on each one. Encoded images and PDFs (`base64`, MCP's `data`) are skipped, so they stay intact.
+3. If nothing changed, the tool's own result is handed on as is. Otherwise the masked result is, and the same toast as for prompts is raised.
+4. **Fail closed.** If masking throws, the output is withheld from the model: the tool has run, but its unchecked output is never read.
+
+### 3. `tool.call` on `Edit` and `Write`: the placeholder guard
+
+Once a `.env` has been read masked, Claude sees `API_KEY=⟦key:sk-•••⟧`. Written back, that placeholder would replace the real key on disk. So an `Edit` whose `new_string`, or a `Write` whose `content`, holds more placeholders than the text it replaces (`old_string`, or the current file) is refused, and the model is told to leave those lines alone or ask you. Edits that keep placeholders as they were, like this README's own examples, pass.
+
+### 4. `ui.render` on `UserMessage`: styling
 
 Fires when the transcript draws one of your messages.
 
@@ -197,13 +210,13 @@ Patterns run in this order. The order matters: keys and secrets come first, so n
 | 0 | `id` | The national ID formats of the countries chosen in the [`countries` option](#countries) | `RSSMRA85T10A562S` → `⟦id:RSS•••⟧` |
 | 1 | `key` | OpenAI / Anthropic `sk-…`, `sk-ant-…`; Stripe `sk_live_…`, `rk_test_…`; GitHub `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_…`; AWS `AKIA…`; Google `AIza…`; Slack `xoxb-`, `xoxp-`, …; JWTs `eyJ….….…`; any 32+ character token that mixes letters and digits | `sk-ant-api03-…` → `⟦key:sk-•••⟧` |
 | 2 | `email` | Any `local@domain.tld`, Unicode letters included | `josé@müller.de` → `⟦email:jos•••⟧` |
-| 3 | `iban` | 2 letters + 2 digits + 3–7 groups of 4, spaces optional (all countries) | `DE89 3704 0044 0532 0130 00` → `⟦iban:DE8•••⟧` |
+| 3 | `bank_account` | IBAN: 2 letters + 2 digits + 3–7 groups of 4, spaces optional (all countries) | `DE89 3704 0044 0532 0130 00` → `⟦bank_account:DE8•••⟧` |
 | 4 | `card` | 13–19 digits, spaces or dashes allowed | `4111 1111 1111 1111` → `⟦card:411•••⟧` |
 | 5 | `phone` | Optional `+` or `00` prefix, optional `(`, then digits with spaces, `()`, `.`, `/`, `-`, **at least 8 digits in total** | `+39 333 123 4567`, `(555) 123-4567`, `020 7946 0958`, `+49 30/1234567` |
 
 **International digits.** Phone and card patterns use Unicode decimal digits (`\p{Nd}`), so Arabic-Indic (`٠١٢٣`), Persian (`۰۱۲۳`), Devanagari (`०१२३`) and other native numerals are detected like Latin ones.
 
-**The 8-digit floor.** For `phone`, `card` and `iban`, a match with fewer than 8 digits is left alone. This keeps years (`2024`), prices, versions, ports and short counts out of the mask.
+**The 8-digit floor.** For `phone`, `card` and `bank_account`, a match with fewer than 8 digits is left alone. This keeps years (`2024`), prices, versions, ports and short counts out of the mask.
 
 **Not phones.** Dates (`2026-10-23 12:30`, `23/10/2026`) and IPv4 addresses (`192.168.1.20`) are left alone, so pasted logs stay readable.
 
@@ -216,7 +229,7 @@ Patterns run in this order. The order matters: keys and secrets come first, so n
 ```
 
 - `⟦` and `⟧` (U+27E6 / U+27E7) are rare enough to never collide with normal prose or code.
-- `<kind>` tells the model what was there (`email`, `phone`, `key`, `secret`, `card`, `iban`, `id`), so it can still reason about the prompt ("send the invoice to ⟦email:mar•••⟧").
+- `<kind>` tells the model what was there (`email`, `phone`, `key`, `secret`, `card`, `bank_account`, `id`), so it can still reason about the prompt ("send the invoice to ⟦email:mar•••⟧").
 - The 3 visible characters let **you** recognise which value was masked when several are in the same prompt.
 
 ---
@@ -254,7 +267,7 @@ The logo is the placeholder itself: the `⟦ ⟧` brackets around the `•••
 
 ## Toast and languages
 
-The toast reads `🔒 <label>: <count>`. The neutral `label: count` form avoids plural rules, which differ widely between languages (Polish, Russian, Arabic, …).
+The toast reads `🔒 <label>: <icon> <count> · <icon> <count>`, one icon per kind: 📧 email, 📞 phone, 🔑 key, 🔐 secret, 💳 card, 🏦 bank_account, 🪪 id. Icons and the neutral `label: count` form need no translation and avoid plural rules, which differ widely between languages (Polish, Russian, Arabic, …).
 
 The language comes from the environment, in POSIX order: `LC_ALL`, then `LC_MESSAGES`, then `LANG`. Only the language part is used (`it_IT.UTF-8` → `it`, `pt-BR` → `pt`). Unknown or unset falls back to English.
 
@@ -302,7 +315,9 @@ redact-secrets/
 
 - `redact(text: string, ids?: RegExp[]): string`: masks `text`; `ids` defaults to every country
 - `countryIds(countries: string): RegExp[]`: turns the `countries` option into patterns
-- `toastText(locale: string | undefined, count: number): string`
+- `redactDeep(value: unknown, ids?: RegExp[]): unknown`: masks every string in a tool result but encoded files
+- `maskedKinds(before: string, after: string): Record<string, number>`: the new placeholders, by kind
+- `toastText(locale: string | undefined, kinds: Record<string, number>): string`
 - `NATIONAL_IDS`, `COLORS`: the country and color tables
 
 ---
@@ -323,6 +338,10 @@ Current result:
 hooks/hooks.test.tsx:
 (pass) a prompt reaches the engine masked, with a counted toast in the locale
 (pass) a prompt with nothing sensitive passes unchanged and raises no toast
+(pass) what a tool prints reaches the model masked
+(pass) output that cannot be checked is withheld, never passed on unmasked
+(pass) a write whose target cannot be read is refused before it runs
+(pass) a placeholder is never written over a real value
 (pass) a masked value is drawn highlighted in the transcript, on every surface
 (pass) a message with nothing masked is left to the engine
 (pass) the countries option limits which national IDs are masked
@@ -334,11 +353,14 @@ hooks/register.test.ts:
 (pass) masks secrets to their first 3 characters
 (pass) masks passwords, credentials in URLs and private keys
 (pass) dates, times and IP addresses are not phone numbers
-(pass) the toast speaks the locale, English otherwise
+(pass) the toast speaks the locale, English otherwise, with one icon per kind
+(pass) counts only the placeholders that are new, by kind
+(pass) commit hashes, digests and UUIDs are not keys
+(pass) masks every string of a tool result but encoded files
 (pass) masks national ID numbers
 (pass) only the chosen countries mask their national IDs
 
- 14 pass
+ 21 pass
  0 fail
 ```
 
@@ -357,8 +379,8 @@ hooks/register.test.ts:
 | `هاتف ٠١٢٣٤٥٦٧٨٩` | `هاتف ⟦phone:٠١٢•••⟧` | Arabic-Indic digits |
 | `key sk-ant-api03-abc…xyz` | `key ⟦key:sk-•••⟧` | Anthropic API key |
 | `carta 4111 1111 1111 1111` | `carta ⟦card:411•••⟧` | card number with spaces |
-| `IT60 X054 2811 1010 0000 0123 456` | `⟦iban:IT6•••⟧` | Italian IBAN |
-| `DE89 3704 0044 0532 0130 00` | `⟦iban:DE8•••⟧` | German IBAN |
+| `IT60 X054 2811 1010 0000 0123 456` | `⟦bank_account:IT6•••⟧` | Italian IBAN |
+| `DE89 3704 0044 0532 0130 00` | `⟦bank_account:DE8•••⟧` | German IBAN |
 | `ho 3 gatti e 2024 anni` | *(unchanged)* | short numbers are **not** masked |
 
 **`masks passwords, credentials in URLs and private keys`** checks the `secret` kind and the newer key formats:
@@ -385,13 +407,13 @@ hooks/register.test.ts:
 | `host 192.168.100.200` | *(unchanged)* | IPv4 |
 | `2026-10-23 333 123 4567` | `⟦card:202•••⟧` | a number after a date is still masked |
 
-**`the toast speaks the locale, English otherwise`** checks `toastText()`:
+**`the toast speaks the locale, English otherwise, with one icon per kind`** checks `toastText()`:
 
 | Locale | Expected |
 |--------|----------|
-| `it_IT.UTF-8` | `🔒 Dati sensibili oscurati prima dell'invio: 2` |
-| `ja_JP.UTF-8` | `🔒 送信前に機密データをマスクしました: 1` |
-| `pt-BR` | `🔒 Dados sensíveis ocultados antes do envio: 3` |
+| `it_IT.UTF-8` | `🔒 Dati sensibili oscurati prima dell'invio: 📧 2` |
+| `ja_JP.UTF-8` | `🔒 送信前に機密データをマスクしました: 🔑 1` |
+| `pt-BR` | `🔒 Dados sensíveis ocultados antes do envio: 📧 2 · 📞 1` |
 | `xx_XX` | English fallback |
 | `undefined` | English fallback |
 
@@ -426,8 +448,12 @@ These run the real hooks through the engine's event chain, not just the helper f
 
 | Test | Setup | Asserts |
 |------|-------|---------|
-| **a prompt reaches the engine masked, with a counted toast in the locale** | `LANG=it_IT.UTF-8`; submits a prompt with an email and a phone | the text that reaches the engine is masked; exactly one toast, in Italian, with count `2` |
+| **a prompt reaches the engine masked, with a counted toast in the locale** | `LANG=it_IT.UTF-8`; submits a prompt with an email and a phone | the text that reaches the engine is masked; exactly one toast, in Italian, reading `📧 1 · 📞 1` |
 | **a prompt with nothing sensitive passes unchanged and raises no toast** | no locale; submits `refactor the login page` | text unchanged; no toast at all |
+| **what a tool prints reaches the model masked** | a `Bash` call whose stdout is `API_KEY=sk-ant-…` | the result reaching the model reads `API_KEY=⟦key:sk-•••⟧` |
+| **a placeholder is never written over a real value** | a `.env` holding a real key; a `Write` and an `Edit` adding placeholders, then a plain `Edit` | the first two are refused and never reach the tool; the plain edit runs |
+| **output that cannot be checked is withheld, never passed on unmasked** | a `Bash` result holding a key and a `BigInt`, which makes masking throw | the call is refused with *could not check this output*; the key appears nowhere in what comes back |
+| **a write whose target cannot be read is refused before it runs** | `fs.read` fails on an existing file; a `Write` to it | refused with *could not check this write*; the tool never runs |
 | **a masked value is drawn highlighted in the transcript, on every surface** | mounts a `UserMessage` row with a placeholder on `terminal`, `desktop`, `vscode` and `mobile` | the row draws `> mail  🔒 mar•••  ok` |
 | **a message with nothing masked is left to the engine** | mounts a `UserMessage` row with plain text | the mod calls `next(e)` and the engine's own drawing is shown |
 | **the countries option limits which national IDs are masked** | option `countries: 'IT'`; submits a codice fiscale and a PAN | only the codice fiscale reaches the engine masked |
@@ -450,7 +476,7 @@ Options are passed with `test(name, { options }, body)`, which the kit reads exa
 |---|---|---|
 | `redact()`: `key` pattern (Anthropic `sk-ant-`) | register.test: key | ✅ |
 | `redact()`: `email` pattern (ASCII + Unicode) | register.test: email ×2 | ✅ |
-| `redact()`: `iban` pattern | register.test: IT, DE | ✅ |
+| `redact()`: `bank_account` (IBAN) pattern | register.test: IT, DE | ✅ |
 | `redact()`: `card` pattern | register.test: card | ✅ |
 | `redact()`: `phone` pattern (`+`, `()`, spaces, `/`, native digits) | register.test: 5 cases | ✅ |
 | `redact()`: 8-digit floor keeps short numbers | register.test: `2024` | ✅ |
@@ -462,6 +488,13 @@ Options are passed with `test(name, { options }, body)`, which the kit reads exa
 | `prompt.submit`: masks, counts, toasts, hands on | hooks.test: masked prompt | ✅ |
 | `prompt.submit`: nothing found → no toast, text unchanged | hooks.test: clean prompt | ✅ |
 | `prompt.submit`: `LANG` read through `$.env.get` | hooks.test: masked prompt | ✅ |
+| `redact()`: hashes and UUIDs not taken as keys; a named key masked once | register.test: hashes, passwords | ✅ |
+| `redactDeep()`: nested strings masked, `base64`/`data` kept | register.test: tool result | ✅ |
+| `maskedKinds()`: only new placeholders, by kind | register.test: counts | ✅ |
+| `tool.call`: tool output masked before the model reads it | hooks.test: tool prints | ✅ |
+| `tool.call` guard: `Write`/`Edit` adding placeholders refused, plain edit passes | hooks.test: placeholder guard | ✅ |
+| `tool.call`: fail closed when masking throws | hooks.test: output withheld | ✅ |
+| `Write` guard: unreadable target refused | hooks.test: unreadable target | ✅ |
 | `ui.render`: placeholder drawn as chip | hooks.test: highlighted row | ✅ |
 | `ui.render`: no placeholder → `next(e)` | hooks.test: engine row | ✅ |
 | `NATIONAL_IDS`: all 9 country patterns | register.test: national IDs | ✅ |
@@ -535,7 +568,10 @@ Everything lives in `hooks/register.tsx`.
 - **Short local numbers pass.** Phone numbers with fewer than 8 digits are not masked.
 - **Only 9 countries have national ID patterns.** Other countries' IDs are masked only if they are long enough to look like a number.
 - **ID patterns check the format, not the checksum.** A random string with the right shape is masked too.
-- **Only your prompt is masked.** Files Claude reads with tools, command output and the model's replies are not touched.
+- **The model's own replies are not masked**, nor is anything a tool writes: only your prompt and what tools return to the model.
+- **Claude cannot see the real values in your files either.** Debugging "why does this key not work?" is harder; paste what is needed into a file Claude does not read, or switch the mod off for that task.
+- **The placeholder guard covers `Edit` and `Write` only.** A shell command (`sed -i`, `echo … > .env`) carrying a placeholder is not stopped.
+- **Long numbers in tool output may be masked**, such as 13-digit timestamps taken for cards.
 - **Slash command arguments are not masked.**
 - **The original value is not kept anywhere.** It cannot be restored later in the conversation.
 

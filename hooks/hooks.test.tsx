@@ -20,7 +20,7 @@ test('a prompt reaches the engine masked, with a counted toast in the locale', a
   const result = await $.prompt.submit({ text: 'mail mario.rossi@gmail.com tel +39 333 123 4567' })
 
   expect(result.text).toBe('mail ⟦email:mar•••⟧ tel ⟦phone:+39•••⟧')
-  expect(toasts).toEqual(["🔒 Dati sensibili oscurati prima dell'invio: 2"])
+  expect(toasts).toEqual(["🔒 Dati sensibili oscurati prima dell'invio: 📧 1 · 📞 1"])
 })
 
 test('a prompt with nothing sensitive passes unchanged and raises no toast', async ($, on) => {
@@ -36,6 +36,65 @@ test('a prompt with nothing sensitive passes unchanged and raises no toast', asy
 
   expect(result.text).toBe('refactor the login page')
   expect(toasts).toEqual([])
+})
+
+test('what a tool prints reaches the model masked', async ($, on) => {
+  on('env.get', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  // Stands for the tool: `cat .env` printing a real key.
+  on('tool.call', () => ({ result: { stdout: 'API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz', stderr: '', interrupted: false } }))
+
+  const ran = await $.tool.call({ tool: 'Bash', command: 'cat .env' })
+
+  expect((ran.result as { stdout: string }).stdout).toBe('API_KEY=⟦key:sk-•••⟧')
+})
+
+test('output that cannot be checked is withheld, never passed on unmasked', async ($, on) => {
+  on('env.get', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  // A BigInt makes JSON.stringify throw inside the masking hook.
+  on('tool.call', () => ({ result: { stdout: 'API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz', size: 1n } }))
+
+  const ran = await $.tool.call({ tool: 'Bash', command: 'cat .env' })
+
+  expect(JSON.stringify(ran)).toContain('could not check this output, so it was withheld')
+  expect(JSON.stringify(ran)).not.toContain('sk-ant-api03')
+})
+
+test('a write whose target cannot be read is refused before it runs', async ($, on) => {
+  const ran: string[] = []
+  on('fs.exists', () => ({ value: true }))
+  on('fs.read', () => {
+    throw new Error('EACCES')
+  })
+  on('tool.call', (_, e) => {
+    ran.push(e.tool)
+    return { result: {} }
+  })
+
+  const write = await $.tool.call({ tool: 'Write', file_path: '/app/.env', content: 'PORT=4000\n' })
+
+  expect(JSON.stringify(write)).toContain('could not check this write')
+  expect(ran).toEqual([])
+})
+
+test('a placeholder is never written over a real value', async ($, on) => {
+  const written: string[] = []
+  on('fs.exists', () => ({ value: true }))
+  on('fs.read', () => ({ value: 'API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz\nPORT=3000\n' }))
+  on('tool.call', (_, e) => {
+    written.push(e.tool)
+    return { result: {} }
+  })
+
+  const write = await $.tool.call({ tool: 'Write', file_path: '/app/.env', content: 'API_KEY=⟦secret:sk-•••⟧\nPORT=4000\n' })
+  const edit = await $.tool.call({ tool: 'Edit', file_path: '/app/.env', old_string: 'PORT=3000', new_string: 'PORT=⟦secret:300•••⟧' })
+  const fine = await $.tool.call({ tool: 'Edit', file_path: '/app/.env', old_string: 'PORT=3000', new_string: 'PORT=4000' })
+
+  expect(JSON.stringify(write)).toContain('masked placeholder')
+  expect(JSON.stringify(edit)).toContain('masked placeholder')
+  expect(fine.isError).toBeUndefined()
+  expect(written).toEqual(['Edit'])
 })
 
 test('a masked value is drawn highlighted in the transcript, on every surface', async ($, on) => {

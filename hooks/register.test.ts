@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { countryIds, redact, toastText } from './register'
+import { countryIds, maskedKinds, redact, redactDeep, toastText } from './register'
 
 test('masks secrets to their first 3 characters', async () => {
   expect(redact('mail mario.rossi@gmail.com ok')).toBe('mail ⟦email:mar•••⟧ ok')
@@ -11,8 +11,8 @@ test('masks secrets to their first 3 characters', async () => {
   expect(redact('هاتف ٠١٢٣٤٥٦٧٨٩')).toBe('هاتف ⟦phone:٠١٢•••⟧')
   expect(redact('key sk-ant-api03-abcdefghijklmnopqrstuvwxyz')).toBe('key ⟦key:sk-•••⟧')
   expect(redact('carta 4111 1111 1111 1111')).toBe('carta ⟦card:411•••⟧')
-  expect(redact('IT60 X054 2811 1010 0000 0123 456')).toBe('⟦iban:IT6•••⟧')
-  expect(redact('DE89 3704 0044 0532 0130 00')).toBe('⟦iban:DE8•••⟧')
+  expect(redact('IT60 X054 2811 1010 0000 0123 456')).toBe('⟦bank_account:IT6•••⟧')
+  expect(redact('DE89 3704 0044 0532 0130 00')).toBe('⟦bank_account:DE8•••⟧')
   expect(redact('ho 3 gatti e 2024 anni')).toBe('ho 3 gatti e 2024 anni')
 })
 
@@ -28,6 +28,8 @@ test('masks passwords, credentials in URLs and private keys', async () => {
   expect(redact('const apiKey = process.env.API_KEY')).toBe('const apiKey = process.env.API_KEY')
   expect(redact('password: ${DB_PASSWORD}')).toBe('password: ${DB_PASSWORD}')
   expect(redact('max_tokens=4096')).toBe('max_tokens=4096')
+  // A key after a name is masked once, as a key.
+  expect(redact('API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz')).toBe('API_KEY=⟦key:sk-•••⟧')
 })
 
 test('dates, times and IP addresses are not phone numbers', async () => {
@@ -38,12 +40,29 @@ test('dates, times and IP addresses are not phone numbers', async () => {
   expect(redact('2026-10-23 333 123 4567')).toBe('⟦card:202•••⟧')
 })
 
-test('the toast speaks the locale, English otherwise', async () => {
-  expect(toastText('it_IT.UTF-8', 2)).toBe("🔒 Dati sensibili oscurati prima dell'invio: 2")
-  expect(toastText('ja_JP.UTF-8', 1)).toBe('🔒 送信前に機密データをマスクしました: 1')
-  expect(toastText('pt-BR', 3)).toBe('🔒 Dados sensíveis ocultados antes do envio: 3')
-  expect(toastText('xx_XX', 1)).toBe('🔒 Sensitive data masked before sending: 1')
-  expect(toastText(undefined, 1)).toBe('🔒 Sensitive data masked before sending: 1')
+test('the toast speaks the locale, English otherwise, with one icon per kind', async () => {
+  expect(toastText('it_IT.UTF-8', { email: 2 })).toBe("🔒 Dati sensibili oscurati prima dell'invio: 📧 2")
+  expect(toastText('ja_JP.UTF-8', { key: 1 })).toBe('🔒 送信前に機密データをマスクしました: 🔑 1')
+  expect(toastText('pt-BR', { email: 2, phone: 1 })).toBe('🔒 Dados sensíveis ocultados antes do envio: 📧 2 · 📞 1')
+  expect(toastText('xx_XX', { card: 1 })).toBe('🔒 Sensitive data masked before sending: 💳 1')
+  expect(toastText(undefined, { id: 1 })).toBe('🔒 Sensitive data masked before sending: 🪪 1')
+})
+
+test('counts only the placeholders that are new, by kind', async () => {
+  expect(maskedKinds('a ⟦key:sk-•••⟧', 'a ⟦key:sk-•••⟧ ⟦email:mar•••⟧ ⟦email:jos•••⟧')).toEqual({ email: 2 })
+  expect(maskedKinds('x', 'x')).toEqual({})
+})
+
+test('commit hashes, digests and UUIDs are not keys', async () => {
+  expect(redact('commit 625f2dc1a2b3c4d5e6f708192a3b4c5d6e7f8091')).toBe('commit 625f2dc1a2b3c4d5e6f708192a3b4c5d6e7f8091')
+  expect(redact('session 4474e912-ce74-4875-9ab3-c027f9c05c30')).toBe('session 4474e912-ce74-4875-9ab3-c027f9c05c30')
+})
+
+test('masks every string of a tool result but encoded files', async () => {
+  const image = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz'
+  expect(
+    redactDeep({ file: { content: 'KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz', numLines: 1, base64: image }, parts: [{ data: image }, 'a.b@c.io'] }),
+  ).toEqual({ file: { content: 'KEY=⟦key:sk-•••⟧', numLines: 1, base64: image }, parts: [{ data: image }, '⟦email:a.b•••⟧'] })
 })
 
 test('masks national ID numbers', async () => {
