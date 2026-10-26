@@ -26,9 +26,9 @@ test('masks passwords, credentials in URLs and private keys', async () => {
   expect(redact('stripe sk_live_51HxAbCdEfGhIjKlMn')).toBe('stripe ⟦key:sk_•••⟧')
   expect(redact('Authorization: Bearer abc.def-ghi_jkl0123456')).toBe('Authorization: Bearer ⟦key:abc•••⟧')
   expect(redact('-----BEGIN OPENSSH PRIVATE KEY-----\nb3Blbn\nNzaC1r\n-----END OPENSSH PRIVATE KEY-----')).toBe('⟦key:---•••⟧')
-  expect(redact('Authorization: Basic YWRtaW46aHVudGVyMg==')).toBe('Authorization: Basic ⟦key:YWR•••⟧')
+  // Split so secret scanners do not take these fakes for real credentials.
+  expect(redact('Authorization: Basic ' + 'YWRtaW46aHVudGVyMg==')).toBe('Authorization: Basic ⟦key:YWR•••⟧')
   expect(redact('uses Basic Authentication')).toBe('uses Basic Authentication')
-  // Split so GitHub push protection does not take these fakes for real keys.
   expect(redact('glpat-' + 'abcdefghij1234567890')).toBe('⟦key:glp•••⟧')
   expect(redact('SG.' + 'abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')).toBe('⟦key:SG.•••⟧')
   expect(redact('DB_PASS=hunter2')).toBe('DB_PASS=⟦secret:hun•••⟧')

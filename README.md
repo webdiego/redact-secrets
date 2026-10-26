@@ -394,7 +394,7 @@ hooks/register.test.ts:
 | `postgres://admin:S3cretPass@localhost:5432/app` | `postgres://admin:⟦secret:S3c•••⟧@localhost:5432/app` | password in a URL, user and host kept |
 | `stripe sk_live_51HxAbCdEfGhIjKlMn` | `stripe ⟦key:sk_•••⟧` | Stripe key |
 | `Authorization: Bearer abc.def-ghi_jkl0123456` | `Authorization: Bearer ⟦key:abc•••⟧` | Bearer token |
-| `Authorization: Basic YWRtaW46aHVudGVyMg==` | `Authorization: Basic ⟦key:YWR•••⟧` | Basic credentials |
+| `Authorization: Basic YWRtaW46…` | `Authorization: Basic ⟦key:YWR•••⟧` | Basic credentials |
 | `uses Basic Authentication` | *(unchanged)* | prose, not base64 |
 | `glpat-abcdefghij…` | `⟦key:glp•••⟧` | GitLab token, whole |
 | `SG.abcdefghijklmnopqrstuv.abcd…` | `⟦key:SG.•••⟧` | SendGrid key, both parts |
