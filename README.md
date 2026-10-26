@@ -205,13 +205,13 @@ Patterns run in this order. The order matters: keys and secrets come first, so n
 
 | # | Kind | What matches | Examples |
 |---|------|--------------|----------|
-| 0 | `key` | Private key blocks `-----BEGIN … PRIVATE KEY-----` … `-----END … PRIVATE KEY-----` (whole block); `Bearer` tokens | `Bearer abc.def…` → `Bearer ⟦key:abc•••⟧` |
-| 0 | `secret` | The password in `scheme://user:password@host`; the value after a name ending in `password`, `passwd`, `pwd`, `secret`, `secret_key`, `token`, `api_key`, `access_key`, `private_key` and `=` or `:` (not env lookups like `process.env.X`, `${X}`) | `PASSWORD=hunter2` → `PASSWORD=⟦secret:hun•••⟧` |
+| 0 | `key` | Private key blocks `-----BEGIN … PRIVATE KEY-----` … `-----END … PRIVATE KEY-----` (whole block); `Bearer` tokens; `Basic` credentials (base64) | `Bearer abc.def…` → `Bearer ⟦key:abc•••⟧` |
+| 0 | `secret` | The password in `scheme://user:password@host`; the value after a name ending in `password`, `passwd`, `pass` (as a whole word: `DB_PASS`, not `bypass`), `pwd`, `secret`, `secret_key`, `token`, `api_key`, `access_key`, `private_key` and `=` or `:` (not env lookups like `process.env.X`, `${X}`) | `PASSWORD=hunter2` → `PASSWORD=⟦secret:hun•••⟧` |
 | 0 | `id` | The national ID formats of the countries chosen in the [`countries` option](#countries) | `RSSMRA85T10A562S` → `⟦id:RSS•••⟧` |
-| 1 | `key` | OpenAI / Anthropic `sk-…`, `sk-ant-…`; Stripe `sk_live_…`, `rk_test_…`; GitHub `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_…`; AWS `AKIA…`; Google `AIza…`; Slack `xoxb-`, `xoxp-`, …; JWTs `eyJ….….…`; any 32+ character token that mixes letters and digits | `sk-ant-api03-…` → `⟦key:sk-•••⟧` |
+| 1 | `key` | OpenAI / Anthropic `sk-…`, `sk-ant-…`; Stripe `sk_live_…`, `rk_test_…`; GitHub `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_…`; GitLab `glpat-…`; SendGrid `SG.….…`; AWS `AKIA…`, `ASIA…`; Google `AIza…`; Slack `xoxb-`, `xoxp-`, `xoxe-`, …; JWTs `eyJ….….…`; any 32+ character token that mixes letters and digits | `sk-ant-api03-…` → `⟦key:sk-•••⟧` |
 | 2 | `email` | Any `local@domain.tld`, Unicode letters included | `josé@müller.de` → `⟦email:jos•••⟧` |
 | 3 | `bank_account` | IBAN: 2 letters + 2 digits + 3–7 groups of 4, spaces optional (all countries) | `DE89 3704 0044 0532 0130 00` → `⟦bank_account:DE8•••⟧` |
-| 4 | `card` | 13–19 digits, spaces or dashes allowed | `4111 1111 1111 1111` → `⟦card:411•••⟧` |
+| 4 | `card` | 13–19 digits, spaces or dashes allowed, passing the Luhn check (others fall to `phone`) | `4111 1111 1111 1111` → `⟦card:411•••⟧` |
 | 5 | `phone` | Optional `+` or `00` prefix, optional `(`, then digits with spaces, `()`, `.`, `/`, `-`, **at least 8 digits in total** | `+39 333 123 4567`, `(555) 123-4567`, `020 7946 0958`, `+49 30/1234567` |
 
 **International digits.** Phone and card patterns use Unicode decimal digits (`\p{Nd}`), so Arabic-Indic (`٠١٢٣`), Persian (`۰۱۲۳`), Devanagari (`०१२३`) and other native numerals are detected like Latin ones.
@@ -379,6 +379,7 @@ hooks/register.test.ts:
 | `هاتف ٠١٢٣٤٥٦٧٨٩` | `هاتف ⟦phone:٠١٢•••⟧` | Arabic-Indic digits |
 | `key sk-ant-api03-abc…xyz` | `key ⟦key:sk-•••⟧` | Anthropic API key |
 | `carta 4111 1111 1111 1111` | `carta ⟦card:411•••⟧` | card number with spaces |
+| `ts 1729958400000` | `ts ⟦phone:172•••⟧` | fails Luhn: not a card, still masked |
 | `IT60 X054 2811 1010 0000 0123 456` | `⟦bank_account:IT6•••⟧` | Italian IBAN |
 | `DE89 3704 0044 0532 0130 00` | `⟦bank_account:DE8•••⟧` | German IBAN |
 | `ho 3 gatti e 2024 anni` | *(unchanged)* | short numbers are **not** masked |
@@ -393,6 +394,12 @@ hooks/register.test.ts:
 | `postgres://admin:S3cretPass@localhost:5432/app` | `postgres://admin:⟦secret:S3c•••⟧@localhost:5432/app` | password in a URL, user and host kept |
 | `stripe sk_live_51HxAbCdEfGhIjKlMn` | `stripe ⟦key:sk_•••⟧` | Stripe key |
 | `Authorization: Bearer abc.def-ghi_jkl0123456` | `Authorization: Bearer ⟦key:abc•••⟧` | Bearer token |
+| `Authorization: Basic YWRtaW46aHVudGVyMg==` | `Authorization: Basic ⟦key:YWR•••⟧` | Basic credentials |
+| `uses Basic Authentication` | *(unchanged)* | prose, not base64 |
+| `glpat-abcdefghij…` | `⟦key:glp•••⟧` | GitLab token, whole |
+| `SG.abcdefghijklmnopqrstuv.abcd…` | `⟦key:SG.•••⟧` | SendGrid key, both parts |
+| `DB_PASS=hunter2` | `DB_PASS=⟦secret:hun•••⟧` | `pass` as a name |
+| `bypass: everything` | *(unchanged)* | `pass` inside a word |
 | `-----BEGIN OPENSSH PRIVATE KEY-----` … `-----END …-----` | `⟦key:---•••⟧` | whole multi-line block |
 | `const apiKey = process.env.API_KEY` | *(unchanged)* | env lookups are code |
 | `password: ${DB_PASSWORD}` | *(unchanged)* | template variables are code |
@@ -405,7 +412,7 @@ hooks/register.test.ts:
 | `at 2026-10-23 12:30:45` | *(unchanged)* | ISO date and time |
 | `on 23/10/2026` | *(unchanged)* | European date |
 | `host 192.168.100.200` | *(unchanged)* | IPv4 |
-| `2026-10-23 333 123 4567` | `⟦card:202•••⟧` | a number after a date is still masked |
+| `2026-10-23 333 123 4567` | `⟦phone:202•••⟧` | a number after a date is still masked |
 
 **`the toast speaks the locale, English otherwise, with one icon per kind`** checks `toastText()`:
 
@@ -571,7 +578,7 @@ Everything lives in `hooks/register.tsx`.
 - **The model's own replies are not masked**, nor is anything a tool writes: only your prompt and what tools return to the model.
 - **Claude cannot see the real values in your files either.** Debugging "why does this key not work?" is harder; paste what is needed into a file Claude does not read, or switch the mod off for that task.
 - **The placeholder guard covers `Edit` and `Write` only.** A shell command (`sed -i`, `echo … > .env`) carrying a placeholder is not stopped.
-- **Long numbers in tool output may be masked**, such as 13-digit timestamps taken for cards.
+- **Long numbers in tool output may be masked**, such as 13-digit timestamps: they fail the Luhn check, so they are not called cards, but they are still masked as `phone`, since a long bare number may be an international phone.
 - **Slash command arguments are not masked.**
 - **The original value is not kept anywhere.** It cannot be restored later in the conversation.
 

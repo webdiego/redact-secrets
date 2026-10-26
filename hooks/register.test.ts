@@ -11,6 +11,8 @@ test('masks secrets to their first 3 characters', async () => {
   expect(redact('هاتف ٠١٢٣٤٥٦٧٨٩')).toBe('هاتف ⟦phone:٠١٢•••⟧')
   expect(redact('key sk-ant-api03-abcdefghijklmnopqrstuvwxyz')).toBe('key ⟦key:sk-•••⟧')
   expect(redact('carta 4111 1111 1111 1111')).toBe('carta ⟦card:411•••⟧')
+  // Fails Luhn: not a card, but still masked as a long number.
+  expect(redact('ts 1729958400000')).toBe('ts ⟦phone:172•••⟧')
   expect(redact('IT60 X054 2811 1010 0000 0123 456')).toBe('⟦bank_account:IT6•••⟧')
   expect(redact('DE89 3704 0044 0532 0130 00')).toBe('⟦bank_account:DE8•••⟧')
   expect(redact('ho 3 gatti e 2024 anni')).toBe('ho 3 gatti e 2024 anni')
@@ -24,6 +26,13 @@ test('masks passwords, credentials in URLs and private keys', async () => {
   expect(redact('stripe sk_live_51HxAbCdEfGhIjKlMn')).toBe('stripe ⟦key:sk_•••⟧')
   expect(redact('Authorization: Bearer abc.def-ghi_jkl0123456')).toBe('Authorization: Bearer ⟦key:abc•••⟧')
   expect(redact('-----BEGIN OPENSSH PRIVATE KEY-----\nb3Blbn\nNzaC1r\n-----END OPENSSH PRIVATE KEY-----')).toBe('⟦key:---•••⟧')
+  expect(redact('Authorization: Basic YWRtaW46aHVudGVyMg==')).toBe('Authorization: Basic ⟦key:YWR•••⟧')
+  expect(redact('uses Basic Authentication')).toBe('uses Basic Authentication')
+  // Split so GitHub push protection does not take these fakes for real keys.
+  expect(redact('glpat-' + 'abcdefghij1234567890')).toBe('⟦key:glp•••⟧')
+  expect(redact('SG.' + 'abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')).toBe('⟦key:SG.•••⟧')
+  expect(redact('DB_PASS=hunter2')).toBe('DB_PASS=⟦secret:hun•••⟧')
+  expect(redact('bypass: everything')).toBe('bypass: everything')
   // Env lookups and token counts are code, not secrets.
   expect(redact('const apiKey = process.env.API_KEY')).toBe('const apiKey = process.env.API_KEY')
   expect(redact('password: ${DB_PASSWORD}')).toBe('password: ${DB_PASSWORD}')
@@ -36,8 +45,8 @@ test('dates, times and IP addresses are not phone numbers', async () => {
   expect(redact('at 2026-10-23 12:30:45')).toBe('at 2026-10-23 12:30:45')
   expect(redact('on 23/10/2026')).toBe('on 23/10/2026')
   expect(redact('host 192.168.100.200')).toBe('host 192.168.100.200')
-  // A phone after a date is still masked (its 13 digits read as a card).
-  expect(redact('2026-10-23 333 123 4567')).toBe('⟦card:202•••⟧')
+  // A phone after a date is still masked, the date with it.
+  expect(redact('2026-10-23 333 123 4567')).toBe('⟦phone:202•••⟧')
 })
 
 test('the toast speaks the locale, English otherwise, with one icon per kind', async () => {

@@ -18,12 +18,15 @@ export const NATIONAL_IDS: Record<string, RegExp> = {
 const SECRETS: [string, RegExp][] = [
   ['key', /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g],
   ['key', /(?<=\bBearer\s+)[A-Za-z0-9._~+\/-]{16,}=*/g],
-  ['key', /\b(?:sk-[A-Za-z0-9_-]{16,}|sk-ant-[A-Za-z0-9_-]{16,}|[rs]k_(?:live|test)_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[abposr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|[A-Za-z0-9_-]*(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,})\b/g],
+  // A digit, +, / or = sets base64 credentials apart from prose like "Basic Authentication".
+  ['key', /(?<=\bBasic\s+)(?=[A-Za-z0-9+\/]*[\d+\/=])[A-Za-z0-9+\/]{8,}=*/g],
+  ['key', /\b(?:sk-[A-Za-z0-9_-]{16,}|sk-ant-[A-Za-z0-9_-]{16,}|[rs]k_(?:live|test)_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|(?:AKIA|ASIA)[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[abposre]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|[A-Za-z0-9_-]*(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,})\b/g],
   // The password in scheme://user:password@host.
   ['secret', /(?<=:\/\/[^\s:@\/]*:)[^\s@\/]+(?=@)/g],
   // The value of PASSWORD=…, "api_key": "…", client_secret: …; not env lookups like process.env.X or ${X}.
   // (?<!⟦): the `secret:` label of a placeholder is not an assignment.
-  ['secret', /(?<=(?<!⟦)(?:passw(?:or)?d|pwd|secret(?:[_-]?key)?|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*["']?)(?![$%{(<⟦]|[A-Za-z_]\w*[.([])[^\s"'`,;]{4,}/gi],
+  // (?<![a-z])pass: DB_PASS, not bypass or compass.
+  ['secret', /(?<=(?<!⟦)(?:passw(?:or)?d|(?<![a-z])pass\b|pwd|secret(?:[_-]?key)?|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*["']?)(?![$%{(<⟦]|[A-Za-z_]\w*[.([])[^\s"'`,;]{4,}/gi],
 ]
 
 // Dates, times and IPv4 addresses look like phone numbers but are not secret.
@@ -41,6 +44,10 @@ const PATTERNS: [string, RegExp][] = [
   ['phone', /(?:\+|(?<!\p{Nd})00)?\(?\p{Nd}[\p{Nd} ().\/-]{6,}\p{Nd}(?!\p{Nd})/gu],
 ]
 
+// Every card number passes the Luhn check; most timestamps and order numbers do not.
+const luhn = (digits: number[]) =>
+  digits.reverse().reduce((sum, d, i) => sum + (i % 2 ? (d * 2 > 9 ? d * 2 - 9 : d * 2) : d), 0) % 10 === 0
+
 // What the model and the transcript see in place of a secret: its first 3 characters.
 const MASK = /⟦(\w+):([^⟧]*)•••⟧/g
 
@@ -56,6 +63,8 @@ export const redact = (text: string, ids: RegExp[] = Object.values(NATIONAL_IDS)
       t.replace(re, m =>
         // Fewer than 8 digits is a year, a price, a count: left alone.
         ((kind === 'card' || kind === 'phone' || kind === 'bank_account') && (m.match(/\p{Nd}/gu) ?? []).length < 8) ||
+        // A long number that fails Luhn is left for the phone pattern, which still masks it.
+        (kind === 'card' && !luhn((m.match(/\p{Nd}/gu) ?? []).map(d => +d))) ||
         (kind === 'phone' && NOT_A_PHONE.test(m)) ||
         (kind === 'key' && NOT_A_KEY.test(m))
           ? m
