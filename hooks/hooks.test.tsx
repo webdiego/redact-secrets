@@ -97,6 +97,21 @@ test('a placeholder is never written over a real value', async ($, on) => {
   expect(written).toEqual(['Edit'])
 })
 
+test('a shell command carrying a placeholder is refused', async ($, on) => {
+  const ran: string[] = []
+  on('tool.call', (_, e) => {
+    ran.push(e.command)
+    return { result: {} }
+  })
+
+  const masked = await $.tool.call({ tool: 'Bash', command: "sed -i 's/^API_KEY=.*/API_KEY=⟦key:sk-•••⟧/' .env" })
+  const fine = await $.tool.call({ tool: 'Bash', command: 'ls -la' })
+
+  expect(JSON.stringify(masked)).toContain('masked placeholder')
+  expect(fine.isError).toBeUndefined()
+  expect(ran).toEqual(['ls -la'])
+})
+
 test('a masked value is drawn highlighted in the transcript, on every surface', async ($, on) => {
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({

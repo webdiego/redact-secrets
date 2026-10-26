@@ -145,7 +145,7 @@ Options live in `~/.claude/settings.json` under `pluginConfigs`:
 
 ## How it works
 
-The mod is a single hooks module, [`hooks/register.tsx`](hooks/register.tsx). Four hooks do the work: `prompt.submit`, `tool.call` (output masking, and a guard on `Edit` and `Write`) and `ui.render` on `UserMessage`; three more draw [the banner](#the-banner-in-the-cli) (`session.start`, `command.run`, `ui.render` on `AbovePrompt`). When it loads, it reads its two options once: `countries` becomes the list of national ID patterns to apply, `color` the chip's background.
+The mod is a single hooks module, [`hooks/register.tsx`](hooks/register.tsx). Four hooks do the work: `prompt.submit`, `tool.call` (output masking, and a guard on `Edit`, `Write` and `Bash`) and `ui.render` on `UserMessage`; three more draw [the banner](#the-banner-in-the-cli) (`session.start`, `command.run`, `ui.render` on `AbovePrompt`). When it loads, it reads its two options once: `countries` becomes the list of national ID patterns to apply, `color` the chip's background.
 
 ### 1. `prompt.submit`: masking
 
@@ -167,9 +167,11 @@ Fires around every tool call (Read, Bash, Grep, WebFetch, MCP tools, …), after
 3. If nothing changed, the tool's own result is handed on as is. Otherwise the masked result is, and the same toast as for prompts is raised.
 4. **Fail closed.** If masking throws, the output is withheld from the model: the tool has run, but its unchecked output is never read.
 
-### 3. `tool.call` on `Edit` and `Write`: the placeholder guard
+### 3. `tool.call` on `Edit`, `Write` and `Bash`: the placeholder guard
 
 Once a `.env` has been read masked, Claude sees `API_KEY=⟦key:sk-•••⟧`. Written back, that placeholder would replace the real key on disk. So an `Edit` whose `new_string`, or a `Write` whose `content`, holds more placeholders than the text it replaces (`old_string`, or the current file) is refused, and the model is told to leave those lines alone or ask you. Edits that keep placeholders as they were, like this README's own examples, pass.
+
+A `Bash` command can write too (`sed -i`, `echo … > .env`), and what it touches cannot be known in advance, so any command carrying a placeholder is refused.
 
 ### 4. `ui.render` on `UserMessage`: styling
 
@@ -218,7 +220,7 @@ Patterns run in this order. The order matters: keys and secrets come first, so n
 
 **The 8-digit floor.** For `phone`, `card` and `bank_account`, a match with fewer than 8 digits is left alone. This keeps years (`2024`), prices, versions, ports and short counts out of the mask.
 
-**Not phones.** Dates (`2026-10-23 12:30`, `23/10/2026`) and IPv4 addresses (`192.168.1.20`) are left alone, so pasted logs stay readable.
+**Not phones.** Dates (`2026-10-23 12:30`, `2024.10.26`, `23/10/2026`), IPv4 addresses (`192.168.1.20`) and build numbers with a one-digit group inside (`130.0.6723.91`) are left alone, so pasted logs stay readable.
 
 ---
 
@@ -342,6 +344,7 @@ hooks/hooks.test.tsx:
 (pass) output that cannot be checked is withheld, never passed on unmasked
 (pass) a write whose target cannot be read is refused before it runs
 (pass) a placeholder is never written over a real value
+(pass) a shell command carrying a placeholder is refused
 (pass) a masked value is drawn highlighted in the transcript, on every surface
 (pass) a message with nothing masked is left to the engine
 (pass) the countries option limits which national IDs are masked
@@ -360,7 +363,7 @@ hooks/register.test.ts:
 (pass) masks national ID numbers
 (pass) only the chosen countries mask their national IDs
 
- 21 pass
+ 22 pass
  0 fail
 ```
 
@@ -412,6 +415,11 @@ hooks/register.test.ts:
 | `at 2026-10-23 12:30:45` | *(unchanged)* | ISO date and time |
 | `on 23/10/2026` | *(unchanged)* | European date |
 | `host 192.168.100.200` | *(unchanged)* | IPv4 |
+| `on 2024.10.26` | *(unchanged)* | dotted date |
+| `chrome 130.0.6723.91` | *(unchanged)* | build number |
+| `Windows 10.0.19041.1234` | *(unchanged)* | build number |
+| `tel 06.12.34.56.78` | `tel ⟦phone:06.•••⟧` | dotted phone, no one-digit group inside |
+| `tel 1.800.555.1234` | `tel ⟦phone:1.8•••⟧` | one-digit group only at the start |
 | `2026-10-23 333 123 4567` | `⟦phone:202•••⟧` | a number after a date is still masked |
 
 **`the toast speaks the locale, English otherwise, with one icon per kind`** checks `toastText()`:
@@ -459,6 +467,7 @@ These run the real hooks through the engine's event chain, not just the helper f
 | **a prompt with nothing sensitive passes unchanged and raises no toast** | no locale; submits `refactor the login page` | text unchanged; no toast at all |
 | **what a tool prints reaches the model masked** | a `Bash` call whose stdout is `API_KEY=sk-ant-…` | the result reaching the model reads `API_KEY=⟦key:sk-•••⟧` |
 | **a placeholder is never written over a real value** | a `.env` holding a real key; a `Write` and an `Edit` adding placeholders, then a plain `Edit` | the first two are refused and never reach the tool; the plain edit runs |
+| **a shell command carrying a placeholder is refused** | a `sed -i` writing a placeholder into `.env`, then `ls -la` | the first is refused and never runs; `ls` runs |
 | **output that cannot be checked is withheld, never passed on unmasked** | a `Bash` result holding a key and a `BigInt`, which makes masking throw | the call is refused with *could not check this output*; the key appears nowhere in what comes back |
 | **a write whose target cannot be read is refused before it runs** | `fs.read` fails on an existing file; a `Write` to it | refused with *could not check this write*; the tool never runs |
 | **a masked value is drawn highlighted in the transcript, on every surface** | mounts a `UserMessage` row with a placeholder on `terminal`, `desktop`, `vscode` and `mobile` | the row draws `> mail  🔒 mar•••  ok` |
@@ -489,7 +498,7 @@ Options are passed with `test(name, { options }, body)`, which the kit reads exa
 | `redact()`: 8-digit floor keeps short numbers | register.test: `2024` | ✅ |
 | `redact()`: `secret` in assignments and URLs, env lookups left alone | register.test: passwords | ✅ |
 | `redact()`: private key blocks, Bearer, Stripe keys | register.test: passwords | ✅ |
-| `redact()`: dates and IPv4 not taken as phones | register.test: dates | ✅ |
+| `redact()`: dates, IPv4 and build numbers not taken as phones | register.test: dates | ✅ |
 | `toastText()`: known locale (POSIX + BCP 47 style) | register.test: it, ja, pt-BR | ✅ |
 | `toastText()`: unknown / missing locale → English | register.test: xx_XX, undefined | ✅ |
 | `prompt.submit`: masks, counts, toasts, hands on | hooks.test: masked prompt | ✅ |
@@ -500,6 +509,7 @@ Options are passed with `test(name, { options }, body)`, which the kit reads exa
 | `maskedKinds()`: only new placeholders, by kind | register.test: counts | ✅ |
 | `tool.call`: tool output masked before the model reads it | hooks.test: tool prints | ✅ |
 | `tool.call` guard: `Write`/`Edit` adding placeholders refused, plain edit passes | hooks.test: placeholder guard | ✅ |
+| `tool.call` guard: `Bash` carrying a placeholder refused, plain command runs | hooks.test: shell guard | ✅ |
 | `tool.call`: fail closed when masking throws | hooks.test: output withheld | ✅ |
 | `Write` guard: unreadable target refused | hooks.test: unreadable target | ✅ |
 | `ui.render`: placeholder drawn as chip | hooks.test: highlighted row | ✅ |
@@ -577,7 +587,7 @@ Everything lives in `hooks/register.tsx`.
 - **ID patterns check the format, not the checksum.** A random string with the right shape is masked too.
 - **The model's own replies are not masked**, nor is anything a tool writes: only your prompt and what tools return to the model.
 - **Claude cannot see the real values in your files either.** Debugging "why does this key not work?" is harder; paste what is needed into a file Claude does not read, or switch the mod off for that task.
-- **The placeholder guard covers `Edit` and `Write` only.** A shell command (`sed -i`, `echo … > .env`) carrying a placeholder is not stopped.
+- **Any shell command carrying a placeholder is refused**, even a harmless one like `echo`. The guard cannot tell which commands write.
 - **Long numbers in tool output may be masked**, such as 13-digit timestamps: they fail the Luhn check, so they are not called cards, but they are still masked as `phone`, since a long bare number may be an international phone.
 - **Slash command arguments are not masked.**
 - **The original value is not kept anywhere.** It cannot be restored later in the conversation.

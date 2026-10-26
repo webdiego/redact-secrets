@@ -29,8 +29,9 @@ const SECRETS: [string, RegExp][] = [
   ['secret', /(?<=(?<!⟦)(?:passw(?:or)?d|(?<![a-z])pass\b|pwd|secret(?:[_-]?key)?|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*["']?)(?![$%{(<⟦]|[A-Za-z_]\w*[.([])[^\s"'`,;]{4,}/gi],
 ]
 
-// Dates, times and IPv4 addresses look like phone numbers but are not secret.
-const NOT_A_PHONE = /^(?:\d{4}-\d{2}-\d{2}|\d{1,2}([./-])\d{1,2}\1\d{4})(?: \d{1,2})?$|^\d{1,3}(?:\.\d{1,3}){3}$/
+// Dates, times, IPv4 addresses and build numbers look like phone numbers but are not secret.
+// A build has a one-digit group inside (130.0.6723.91); dotted phones do not (06.12.34.56.78, 1.800.555.1234).
+const NOT_A_PHONE = /^(?:\d{4}([./-])\d{2}\1\d{2}|\d{1,2}([./-])\d{1,2}\2\d{4})(?: \d{1,2})?$|^\d{1,3}(?:\.\d{1,3}){3}$|^\d+(?:\.\d+)*\.\d(?:\.\d+)+$/
 
 // Git commit hashes, SHA-256 digests and UUIDs fill tool output and are not secret.
 const NOT_A_KEY = /^(?:[\da-f]{40}|[\da-f]{64}|[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})$/i
@@ -264,6 +265,17 @@ export const register: Register = (on, options) => {
     if (current === undefined) return { deny: 'redact-secrets could not check this write' }
     return guard(e.file_path, current, e.content) ?? next(e)
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'redact-secrets could not check this write' }))
+
+  // A shell command can write too (sed -i, echo > .env), and what it touches cannot be known: any placeholder is refused.
+  on('tool.call', { tool: 'Bash' }, ($, e, next) =>
+    placeholders(e.command) > 0
+      ? {
+          deny:
+            'redact-secrets: this command carries a masked placeholder (⟦…•••⟧), which could be written over the real value it ' +
+            'stands for. Refer to the value through its file or an environment variable, or ask the user to run the command.',
+        }
+      : next(e),
+  ).catch(($, e, next) => (next.called ? next(e) : { deny: 'redact-secrets could not check this command' }))
 
   on('ui.render', { component: 'UserMessage' }, ($, e, next) => {
     const text = e.props.text

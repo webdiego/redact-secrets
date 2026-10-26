@@ -45,6 +45,12 @@ test('dates, times and IP addresses are not phone numbers', async () => {
   expect(redact('at 2026-10-23 12:30:45')).toBe('at 2026-10-23 12:30:45')
   expect(redact('on 23/10/2026')).toBe('on 23/10/2026')
   expect(redact('host 192.168.100.200')).toBe('host 192.168.100.200')
+  expect(redact('on 2024.10.26')).toBe('on 2024.10.26')
+  expect(redact('chrome 130.0.6723.91')).toBe('chrome 130.0.6723.91')
+  expect(redact('Windows 10.0.19041.1234')).toBe('Windows 10.0.19041.1234')
+  // Dotted phones have no one-digit group inside.
+  expect(redact('tel 06.12.34.56.78')).toBe('tel ⟦phone:06.•••⟧')
+  expect(redact('tel 1.800.555.1234')).toBe('tel ⟦phone:1.8•••⟧')
   // A phone after a date is still masked, the date with it.
   expect(redact('2026-10-23 333 123 4567')).toBe('⟦phone:202•••⟧')
 })
